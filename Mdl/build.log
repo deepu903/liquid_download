@@ -1,0 +1,12 @@
+[33m❯[39m Building...
+[32m✔[39m Building...
+[1mInitial chunk files[22m[2m | [22m[1mNames[22m        [2m | [22m [1mRaw size[22m[2m | [22m[1mEstimated transfer size[22m
+[32mmain-ZJBA6MDZ.js[39m   [2m | [22m[2mmain[22m         [2m | [22m[36m220.23 kB[39m[2m | [22m               [36m62.79 kB[39m
+[32mstyles-WM4MSMGW.css[39m[2m | [22m[2mstyles[22m       [2m | [22m [36m56.70 kB[39m[2m | [22m                [36m6.96 kB[39m
+
+[1m [22m                  [2m | [22m[1mInitial total[22m[2m | [22m[1m276.93 kB[22m[2m | [22m               [1m69.75 kB[22m
+
+Application bundle generation complete. [8.109 seconds] - 2026-03-06T00:44:08.932Z
+
+Output location: C:\Users\Asus\OneDrive\Documents\Frontend\Project\Mdl\dist\social-downloader
+

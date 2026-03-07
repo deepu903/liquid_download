@@ -67,15 +67,8 @@ export class DownloaderComponent {
     const mainMsg = (err.message || '').toLowerCase();
     const status = err.status;
 
-    const isPhoto = serverError.includes('photo') || serverError.includes('image') || 
-                    details.includes('photo') || details.includes('image') ||
-                    mainMsg.includes('photo') || mainMsg.includes('image');
-
     const isPrivate = serverError.includes('private') || details.includes('private') || mainMsg.includes('private');
 
-    if (isPhoto) {
-      return 'Photos not supported yet!';
-    }
     if (isPrivate) {
       return 'This post seems to be private. Try with a public link!';
     }

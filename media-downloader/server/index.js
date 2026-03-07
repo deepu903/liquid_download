@@ -6,6 +6,9 @@ const ytdlp = require('yt-dlp-exec');
 const ffmpeg = require('ffmpeg-static');
 const { spawn } = require('child_process');
 
+// Helpers
+const isImage = (ext) => ['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext?.toLowerCase());
+
 const app = express();
 const port = 3002;
 
@@ -30,28 +33,67 @@ app.get('/download', async (req, res) => {
   console.log(`- Format ID: ${formatId || 'best'}`);
   
   try {
-    // 1. Get raw info to find specific URLs for video and audio
-    console.log(`- Fetching stream URLs for format ${formatId}...`);
-    const info = await ytdlp(url, {
-      dumpSingleJson: true,
-      noWarnings: true,
-      format: formatId ? `${formatId}+bestaudio/best` : 'best',
-      addHeader: [
-        'referer:youtube.com',
-        'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36'
-      ]
-    });
+    const skipYtdlp = url.includes('scontent') || url.match(/\.(jpg|jpeg|png|webp|gif|mp4|mp3|m4a|webm)($|\?)/i);
+    let videoUrl = url;
+    let audioUrl = null;
 
-    if (!info) throw new Error('Could not fetch format info');
+    if (skipYtdlp) {
+      console.log("- Direct media URL detected or scontent link, skipping re-extraction.");
+    } else {
+      // 1. Get raw info to find specific URLs for video and audio
+      console.log(`- Fetching stream URLs for format ${formatId || 'best'}...`);
+      
+      let info;
+      try {
+        info = await ytdlp(url, {
+          dumpSingleJson: true,
+          noWarnings: true,
+          format: formatId ? `${formatId}+bestaudio/best` : 'best',
+          addHeader: [
+            'referer:instagram.com',
+            'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
+          ],
+          noCheckCertificate: true,
+          preferFreeFormats: true
+        });
+      } catch (innerErr) {
+        if (url.includes('instagram.com')) {
+          console.log("- YT-DLP failed in download, trying internal scraper...");
+          const scraped = await scrapeInstagramImage(url);
+          if (scraped && scraped.formats && scraped.formats.length > 0) {
+            // Find the format that matches formatId or first
+            const fmt = scraped.formats.find(f => f.id === formatId) || scraped.formats[0];
+            videoUrl = fmt ? fmt.url : null;
+          } else {
+            throw innerErr;
+          }
+        } else {
+          throw innerErr;
+        }
+      }
 
-    // Find the requested formats in requested_formats or raw info
-    // When formatId contains '+', yt-dlp returns requested_formats
-    const videoUrl = info.requested_formats ? info.requested_formats[0].url : info.url;
-    const audioUrl = info.requested_formats && info.requested_formats[1] ? info.requested_formats[1].url : null;
-
-    console.log(`- Stream URLs Found:`);
-    console.log(`  V: ${videoUrl ? 'YES' : 'NO'}`);
-    console.log(`  A: ${audioUrl ? 'YES' : 'NO'}`);
+      if (info) {
+        // Correctly resolve the stream URL depending on if it's from scraper or yt-dlp
+        if (info.platform === 'Instagram' && !info.requested_formats) {
+          // Likely from our custom scraper or an image post
+          const fmt = (info.formats && info.formats.length > 0) ? (info.formats.find(f => f.id === formatId) || info.formats[0]) : null;
+          videoUrl = fmt ? fmt.url : (info.url || null);
+        } else {
+          // Likely from yt-dlp. Be careful: yt-dlp info.url is the stream. webpage_url is the page.
+          // BUT some extractors put the page in info.url.
+          const candidate = info.requested_formats ? info.requested_formats[0].url : (info.url || (info.formats && info.formats[0] ? info.formats[0].url : null));
+          
+          // If the candidate looks like the original page URL, avoid it.
+          if (candidate && (candidate === url || candidate.includes('instagram.com/p/') || candidate.includes('instagram.com/reels/'))) {
+             videoUrl = (info.formats && info.formats[0]) ? info.formats[0].url : candidate;
+          } else {
+             videoUrl = candidate;
+          }
+          
+          audioUrl = info.requested_formats && info.requested_formats[1] ? info.requested_formats[1].url : null;
+        }
+      }
+    }
 
     if (!videoUrl) throw new Error('Source stream URL missing');
 
@@ -66,12 +108,40 @@ app.get('/download', async (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="${filename || 'download.mp4'}"`);
     res.setHeader('Content-Type', contentType);
 
-    if (!audioUrl) {
-      // Just proxy the single video/audio/image stream
-      console.log(`- No merging needed, proxying single stream (${contentType})...`);
-      const response = await axios({ method: 'get', url: videoUrl, responseType: 'stream' });
-      response.data.pipe(res);
-      return;
+    // Use Axios to check the real content-type if possible, or trust our mapper
+    try {
+      if (!audioUrl) {
+        // Just proxy the single video/audio/image stream
+        console.log(`- No merging needed, proxying single stream...`);
+        
+        const axiosOptions = { 
+          method: 'get', 
+          url: videoUrl, 
+          responseType: 'stream',
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36'
+          }
+        };
+        
+        const response = await axios(axiosOptions);
+        
+        // Use the real content-type from the source if we're just proxying
+        const realContentType = response.headers['content-type'] || contentType;
+        res.setHeader('Content-Type', realContentType);
+        
+        // Adjust filename if the content-type is an image but filename said mp4
+        let finalFilename = filename || 'download.mp4';
+        if (realContentType.includes('image') && finalFilename.endsWith('.mp4')) {
+            finalFilename = finalFilename.replace('.mp4', '.jpg');
+            res.setHeader('Content-Disposition', `attachment; filename="${finalFilename}"`);
+        }
+
+        response.data.pipe(res);
+        return;
+      }
+    } catch (proxyError) {
+      console.error('- Proxying attempt failed:', proxyError.message);
+      // Fall through to see if ffmpeg might have worked (though unlikely without videoUrl) or just let main catch handle it
     }
 
     // 2. Perform on-the-fly merging via FFmpeg
@@ -118,6 +188,121 @@ app.get('/', (req, res) => {
   res.send('Media Downloader Backend is LIVE');
 });
 
+// Specialized Instagram Image Scraper Fallback
+const scrapeInstagramImage = async (igUrl) => {
+  console.log('- Attempting mobile scraper for Instagram image...');
+  try {
+    const resp = await axios.get(igUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9'
+      },
+      timeout: 10000
+    });
+
+    const html = resp.data;
+    const ogImg = (html.match(/property="og:image"\s+content="([^"]+)"/i) || [])[1];
+    const ogVideo = (html.match(/property="og:video"\s+content="([^"]+)"/i) || [])[1];
+    const ogType = (html.match(/property="og:type"\s+content="([^"]+)"/i) || [])[1];
+    const ogTitle = (html.match(/property="og:title"\s+content="([^"]+)"/i) || [])[1];
+    const ogDesc = (html.match(/property="og:description"\s+content="([^"]+)"/i) || [])[1];
+
+    // Aggressive pattern matching for video URLs in JSON-like strings
+    const videoUrlPattern = /"video_url":"([^"]+)"/g;
+    let match;
+    let foundVideoUrl = null;
+    while ((match = videoUrlPattern.exec(html)) !== null) {
+      const url = match[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
+      if (url.includes('scontent') && (url.includes('.mp4') || url.includes('_n.mp4'))) {
+        foundVideoUrl = url;
+        break; // Take the first valid scontent video URL
+      }
+    }
+
+    const cleanImgUrl = (ogImg || '').replace(/&amp;/g, '&');
+    const cleanVideoUrl = (ogVideo || foundVideoUrl || (html.match(/https?:\/\/[^/]*scontent[^"> \s]*\.mp4[^"> \s]*/g) || [])[0] || '').replace(/&amp;/g, '&');
+    
+    // Check if it's a video based on type, link format, or if we found a video URL
+    let isVideo = ogType === 'video' || !!cleanVideoUrl || igUrl.includes('/reel/') || igUrl.includes('/reels/') || igUrl.includes('/tv/');
+
+    console.log(`- Scraper detected: ${isVideo ? 'VIDEO' : 'IMAGE'}`);
+    if (isVideo && !cleanVideoUrl) {
+      console.warn('- Detected as video but no stream found. Metadata might be hidden.');
+    }
+
+    if (isVideo && cleanVideoUrl) {
+      return {
+        title: (ogTitle || 'Instagram Video').split('|')[0].trim(),
+        description: ogDesc || '',
+        thumbnail: cleanImgUrl,
+        duration: 'Video',
+        platform: 'Instagram',
+        ext: 'mp4',
+        url: cleanVideoUrl,
+        webpage_url: igUrl,
+        formats: [{
+          id: 'best',
+          ext: 'mp4',
+          resolution: 'Original',
+          qualityLabel: 'Original Video (MP4)',
+          url: cleanVideoUrl,
+          hasAudio: true,
+          hasVideo: true,
+          priority: 25
+        }]
+      };
+    }
+
+    if (!cleanImgUrl) throw new Error('No media metadata found in page');
+
+    // Simple carousel detection for images
+    const additionalImages = html.match(/https?:\/\/[^/]*scontent[^"> \s]+\.jpg[^"> \s]*/g) || [];
+    const uniqueImages = Array.from(new Set(additionalImages.map(u => u.replace(/&amp;/g, '&'))))
+      .filter(u => u !== cleanImgUrl)
+      .slice(0, 10);
+
+    const formats = [{
+      id: 'original',
+      ext: 'jpg',
+      resolution: 'Original',
+      qualityLabel: 'Original Photo (Image)',
+      url: cleanImgUrl,
+      hasAudio: false,
+      hasVideo: false,
+      priority: 15
+    }];
+
+    uniqueImages.forEach((u, i) => {
+      formats.push({
+        id: `slide-${i + 1}`,
+        ext: 'jpg',
+        resolution: 'Carousel Slide',
+        qualityLabel: `Slide ${i + 2} (Image)`,
+        url: u,
+        hasAudio: false,
+        hasVideo: false,
+        priority: 14 - i
+      });
+    });
+
+    return {
+      title: (ogTitle || 'Instagram Photo').split('|')[0].trim(),
+      description: ogDesc || '',
+      thumbnail: cleanImgUrl,
+      duration: 'Photo',
+      platform: 'Instagram',
+      ext: 'jpg', // ENSURE UI SEES JPG
+      url: cleanImgUrl, // DIRECT MEDIA URL
+      webpage_url: igUrl, // Original link
+      formats: formats
+    };
+  } catch (err) {
+    console.error('- Mobile scraper failed:', err.message);
+    return null;
+  }
+};
+
 app.post('/extract', async (req, res) => {
   const { url } = req.body;
   console.log(`\n>>> EXTRACTION REQUEST START <<<`);
@@ -149,6 +334,7 @@ app.post('/extract', async (req, res) => {
     });
   }
 
+
   try {
     console.log('- Spawning yt-dlp process...');
     
@@ -163,31 +349,88 @@ app.post('/extract', async (req, res) => {
         extractFlat: true,
         addHeader: [
           'referer:instagram.com',
-          'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36'
-        ]
+          'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
+          'accept-language:en-US,en;q=0.9'
+        ],
+        noCheckCertificate: true,
+        geoByPass: true,
+        youtubeSkipDashManifest: true
       });
-    } catch (e) {
-      console.warn('- Primary extraction failed, trying fallback...');
-      info = await ytdlp(url, {
-        dumpSingleJson: true,
-        noWarnings: true,
-        ignoreErrors: true,
-        addHeader: [ 'user-agent:Mozilla/5.0' ]
-      });
+    } catch (firstError) {
+      const isInstagram = url.includes('instagram.com');
+      const isPotentialVideo = url.includes('/reel/') || url.includes('/tv/') || url.includes('youtube.com') || url.includes('twitter.com') || url.includes('x.com');
+
+      console.warn(`- Primary extraction failed. Instagram: ${isInstagram}, Video Probable: ${isPotentialVideo}`);
+      
+      // Try specialized scraper first if it's Instagram
+      if (isInstagram) {
+          info = await scrapeInstagramImage(url);
+          // If the scraper surprisingly found a video or we are sure it's a video but scraper only found thumbnail,
+          // we might want to try ytdlp one more time with a different approach
+          if (info && info.duration === 'Photo' && isPotentialVideo) {
+              console.log('- Scraper only found Photo for a potential video. Retrying YT-DLP...');
+              info = null; 
+          }
+      }
+      
+      // If scraper didn't work, not Instagram, or we strictly need to find the video stream
+      if (!info) {
+          console.log('- Falling back to secondary ytdlp attempt with simplified headers...');
+          try {
+            info = await ytdlp(url, {
+              dumpSingleJson: true,
+              noWarnings: true,
+              ignoreErrors: true,
+              addHeader: [ 
+                'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36' 
+              ],
+              noCheckCertificate: true
+            });
+          } catch (secondError) {
+            console.error('- All extraction attempts failed.');
+          }
+      }
     }
 
     if (!info || (!info.url && !info.formats && !info.entries)) {
+      // Fallback for Instagram images specifically
+      if (url.includes('instagram.com')) {
+        const scraperInfo = await scrapeInstagramImage(url);
+        if (scraperInfo) {
+          console.log(`- Scraper success: "${scraperInfo.title}"`);
+          return res.json(scraperInfo);
+        }
+      }
       throw new Error('YT-DLP found no media content');
     }
 
     console.log(`- Extraction successful: "${info.title || 'Untitled'}"`);
     console.log(`- Formats found: ${info.formats ? info.formats.length : 0}`);
 
-    const isImage = (ext) => ['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext?.toLowerCase());
-    const mediaExt = info.ext || (info.url ? path.extname(info.url).slice(1).split('?')[0] : '');
-    const currentlyImage = isImage(mediaExt);
-
     const allFormats = (info.formats || []);
+    // A format is a video if vcodec isn't none OR it has a non-image extension
+    let hasAnyVideo = allFormats.some(f => {
+      const ext = f.ext || (f.url ? path.extname(f.url).slice(1).split('?')[0] : '');
+      return (f.vcodec && f.vcodec !== 'none') || (ext && !isImage(ext));
+    });
+    
+    const isInstagram = url.includes('instagram.com');
+    const mediaExt = info.ext || (info.url ? path.extname(info.url).slice(1).split('?')[0] : '');
+
+    // FORCE Scraper retry if it's Instagram but no video formats found
+    // This handles reels/videos that yt-dlp identifies as static images initially
+    if (isInstagram && !hasAnyVideo) {
+      console.log('- Instagram link with no formats found. Retrying with mobile scraper...');
+      const scrapedResult = await scrapeInstagramImage(url);
+      if (scrapedResult && scrapedResult.duration === 'Video') {
+           console.log('- Scraper found the hidden Video! Returning.');
+           return res.json(scrapedResult);
+      }
+    }
+
+    const currentlyImage = isImage(mediaExt) && !hasAnyVideo;
+
+    console.log(`- Detection: Ext=${mediaExt}, isImage=${isImage(mediaExt)}, hasVideo=${hasAnyVideo} => currentlyImage=${currentlyImage}`);
     
     // 0. Static Images
     let images = allFormats
@@ -303,18 +546,20 @@ app.post('/extract', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('!!! EXTRACTION FATAL ERROR !!!', error.message);
+    console.error('!!! EXTRACTION FATAL ERROR !!!', error);
     res.status(500).json({ 
       error: 'Failed to extract media', 
-      details: error.message,
-      code: error.message.includes('image') || error.message.includes('photo') ? 'PHOTOS_NOT_SUPPORTED' : 'EXTRACTION_FAILED'
+      details: error.message || 'Unknown error',
+      code: (error.message || '').includes('image') || (error.message || '').includes('photo') ? 'PHOTOS_NOT_SUPPORTED' : 'EXTRACTION_FAILED',
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 });
 
-app.listen(port, () => {
+const host = '127.0.0.1';
+app.listen(port, host, () => {
   console.log(`\n=========================================`);
-  console.log(`Backend server ready at http://localhost:${port}`);
+  console.log(`Backend server ready at http://${host}:${port}`);
   console.log(`=========================================\n`);
 });
 

@@ -28,7 +28,7 @@ export interface MediaInfo {
 })
 export class MediaService {
   // Replace with your actual proxy or extraction API endpoint
-  private apiUrl = 'http://localhost:3002/extract'; 
+  private apiUrl = 'http://127.0.0.1:3002/extract'; 
 
   constructor(private http: HttpClient) {}
 
@@ -53,7 +53,7 @@ export class MediaService {
    * Triggers a browser download for the given URL via the backend proxy.
    */
   downloadFile(url: string, filename: string, formatId?: string): void {
-    const proxyUrl = `http://localhost:3002/download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}&formatId=${encodeURIComponent(formatId || '')}`;
+    const proxyUrl = `http://127.0.0.1:3002/download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}&formatId=${encodeURIComponent(formatId || '')}`;
     
     // Direct navigation is more reliable for endpoints that return Content-Disposition: attachment
     window.location.href = proxyUrl;
