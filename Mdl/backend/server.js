@@ -5,6 +5,8 @@ const morgan = require('morgan');
 const youtubedl = require('youtube-dl-exec');
 const axios = require('axios');
 
+const { JSDOM } = require('jsdom');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -51,7 +53,7 @@ function formatDuration(sec) {
 // Health check
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));
 
-// Proxy download to bypass IP locks/CORS
+// Proxy download
 app.get('/api/download', async (req, res) => {
     const { url, filename } = req.query;
     if (!url) return res.status(400).send('URL is required');
@@ -63,19 +65,16 @@ app.get('/api/download', async (req, res) => {
             method: 'get',
             url: url,
             responseType: 'stream',
-            timeout: 30000,
+            timeout: 60000, // Increased timeout for heavy files
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                 'Accept': '*/*',
                 'Connection': 'keep-alive'
             },
-            // Follow redirects automatically
-            maxRedirects: 5
+            maxRedirects: 10
         });
 
-        // Set attachment headers so it downloads instead of opening
         res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename || 'download')}"`);
-        
         if (response.headers['content-type']) res.setHeader('Content-Type', response.headers['content-type']);
         if (response.headers['content-length']) res.setHeader('Content-Length', response.headers['content-length']);
 
@@ -88,105 +87,120 @@ app.get('/api/download', async (req, res) => {
 
     } catch (error) {
         console.error('[PROXY ERROR]', error.message);
-        if (error.response) {
-            console.error('[PROXY ERROR DATA]', error.response.status);
-        }
-        res.status(500).send('Failed to stream file. This link might be IP-locked by the platform.');
+        res.status(500).send('Failed to stream file. This link might be IP-locked or expired.');
     }
 });
 
 app.post('/api/extract', async (req, res) => {
     const { url } = req.body;
-
-    if (!url) {
-        return res.status(400).json({ status: 'error', message: 'Please provide a valid URL' });
-    }
+    if (!url) return res.status(400).json({ status: 'error', message: 'Please provide a valid URL' });
 
     console.log(`[API] Extracting: ${url}`);
 
     try {
         let targetUrl = url;
         
-        // Pinterest/Shortened links: follow redirects manually to get the clean direct link
-        if (url.includes('t.co') || url.includes('bit.ly') || url.includes('pin.it') || url.includes('goo.gl')) {
+        // Manual Redirect Handling (Pinterest/Shortened)
+        if (url.match(/pin\.it|t\.co|bit\.ly|goo\.gl|tinyurl/)) {
             try {
-                const resp = await axios.head(url, { 
+                const resp = await axios.get(url, { 
                     maxRedirects: 5, 
                     timeout: 5000,
                     headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36' }
                 });
-                const resolved = resp.request.res.responseUrl;
-                if (resolved && !resolved.match(/^https?:\/\/[^\/]+\/?$/)) {
-                    targetUrl = resolved;
-                    console.log(`[API] Resolved redirect: ${targetUrl}`);
-                }
-            } catch (pingErr) {
-                console.warn(`[API] Redirect ping failed: ${pingErr.message}`);
-                // If HEAD fails, try a GET with manual redirect tracking
-                try {
-                    const resp = await axios.get(url, { maxRedirects: 5, timeout: 5000 });
-                    targetUrl = resp.request.res.responseUrl || url;
-                } catch(e) {}
-            }
+                targetUrl = resp.request.res.responseUrl || url;
+                console.log(`[API] Resolved URL: ${targetUrl}`);
+            } catch (e) { console.warn('[API] Redirect failed, using original'); }
         }
 
         // Determine referer
         let referer = 'https://www.google.com/';
         if (targetUrl.includes('youtube.com') || targetUrl.includes('youtu.be')) referer = 'https://www.youtube.com/';
         else if (targetUrl.includes('instagram.com')) referer = 'https://www.instagram.com/';
-        else if (targetUrl.includes('pinterest.com') || targetUrl.includes('pin.it')) referer = 'https://www.pinterest.com/';
         else if (targetUrl.includes('tiktok.com')) referer = 'https://www.tiktok.com/';
-        else if (targetUrl.includes('facebook.com')) referer = 'https://www.facebook.com/';
 
-        console.log(`[API] Using referer: ${referer}`);
+        // -- STAGE 1: yt-dlp --
+        let output = null;
+        try {
+            console.log(`[EXTRACT-1] Trying yt-dlp...`);
+            output = await youtubedl(targetUrl, {
+                dumpSingleJson: true,
+                noCheckCertificates: true,
+                noPlaylist: true,
+                skipDownload: true,
+                quiet: true,
+                addHeader: [
+                    `referer:${referer}`,
+                    'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+                ],
+                extractorArgs: 'generic:impersonate'
+            });
+        } catch (ytErr) {
+            console.warn(`[EXTRACT-1] Failed: ${ytErr.message}`);
+        }
 
-        // Optimize for speed: only get metadata, no playlist, skip expensive checks
-        const output = await youtubedl(targetUrl, {
-            dumpSingleJson: true,
-            noCheckCertificates: true,
-            noWarnings: true,
-            noPlaylist: true,
-            skipDownload: true,
-            quiet: true,
-            addHeader: [
-                `referer:${referer}`,
-                'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                'accept-language:en-US,en;q=0.9',
-                'sec-ch-ua: "Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
-                'sec-ch-ua-mobile:?0',
-                'sec-ch-ua-platform: "Windows"'
-            ]
-        }).catch(async (err) => {
-            // FALLBACK for Pinterest Mobile links if yt-dlp fails
-            if (targetUrl.includes('pinterest.com') || targetUrl.includes('pin.it')) {
-                console.log('[API] Attempting Pinterest scraping fallback...');
-                try {
-                    const htmlResponse = await axios.get(targetUrl, {
-                        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36' }
-                    });
-                    const imgMatch = htmlResponse.data.match(/"contentUrl":"(https:\/\/i\.pinimg\.com\/originals\/[^"]+)"/) || 
-                                     htmlResponse.data.match(/property="og:image" content="(https:\/\/i\.pinimg\.com\/originals\/[^"]+)"/);
-                    
-                    if (imgMatch && imgMatch[1]) {
-                        return {
-                            title: 'Pinterest Image',
-                            url: imgMatch[1],
-                            formats: [],
-                            extractor: 'pinterest_fallback'
-                        };
-                    }
-                } catch (scrapErr) {
-                    console.error('[API] Scrape fallback failed:', scrapErr.message);
+        // -- STAGE 2: Generic Scraper Fallback --
+        const hasData = output && (output.formats?.length > 0 || output.entries?.length > 0 || output.url);
+        
+        if (!hasData) {
+            console.log('[EXTRACT-2] Using Generic HTML Scraper...');
+            try {
+                const htmlResponse = await axios.get(targetUrl, {
+                    headers: { 
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
+                    },
+                    timeout: 10000
+                });
+
+                const dom = new JSDOM(htmlResponse.data);
+                const doc = dom.window.document;
+                const sources = [];
+
+                // Find <video> tags
+                doc.querySelectorAll('video').forEach(v => {
+                    const src = v.src || v.querySelector('source')?.src;
+                    if (src) sources.push({ url: src, type: 'video' });
+                });
+
+                // Find Meta tags
+                const metaVid = doc.querySelector('meta[property="og:video"]')?.content || 
+                               doc.querySelector('meta[property="og:video:secure_url"]')?.content;
+                if (metaVid) sources.push({ url: metaVid, type: 'video' });
+
+                // Find iframes
+                doc.querySelectorAll('iframe').forEach(ifr => {
+                    if (ifr.src?.match(/youtube|vimeo|dailymotion/)) sources.push({ url: ifr.src, type: 'embed' });
+                });
+
+                if (sources.length > 0) {
+                    output = {
+                        title: doc.title || 'Extracted Media',
+                        url: targetUrl,
+                        extractor: 'generic',
+                        thumbnail: doc.querySelector('meta[property="og:image"]')?.content,
+                        formats: sources.map((s, i) => ({
+                            url: s.url.startsWith('//') ? 'https:' + s.url : (s.url.startsWith('/') ? new URL(s.url, targetUrl).href : s.url),
+                            ext: s.type === 'video' ? 'mp4' : 'link',
+                            format_note: `Source ${i+1}`,
+                            vcodec: s.type === 'video' ? 'h264' : 'none',
+                            acodec: s.type === 'video' ? 'aac' : 'none'
+                        }))
+                    };
                 }
+            } catch (scrapErr) {
+                console.error('[EXTRACT-2] Failed:', scrapErr.message);
             }
-            console.error(`[YT-DLP ERROR] Full Error:`, err);
-            throw err;
-        });
+        }
 
-        console.log(`[API] Successfully extracted: ${output.title}`);
+        if (!output) {
+            return res.status(404).json({ status: 'error', message: 'No media found. The site might be protected or private.' });
+        }
 
         const formats = [];
         const seenUrls = new Set();
+
+        // Process formats/entries...
 
         // 1. Initial Check: If no entries/formats, but we have a url, check if it's an image
         if (!output.formats?.length && !output.entries?.length && output.url) {
@@ -300,9 +314,11 @@ app.post('/api/extract', async (req, res) => {
                     ext = match ? match[1] : 'jpg';
                 }
                 const sanitizedTitle = (output.title || 'media').substring(0, 50).replace(/[^a-z0-9]/gi, '_');
+                const host = req.get('host');
+                const protocol = req.protocol;
                 return {
                     ...f,
-                    url: `http://localhost:3000/api/download?url=${encodeURIComponent(f.url)}&filename=${encodeURIComponent(sanitizedTitle + '.' + ext)}`
+                    url: `${protocol}://${host}/api/download?url=${encodeURIComponent(f.url)}&filename=${encodeURIComponent(sanitizedTitle + '.' + ext)}`
                 };
             })
         };
@@ -319,7 +335,7 @@ app.post('/api/extract', async (req, res) => {
     }
 });
 
-app.listen(PORT, '127.0.0.1', () => {
+app.listen(PORT, '0.0.0.0', () => {
     console.log(`
 🚀 Liquid Media API is running!
 📡 Local: http://127.0.0.1:${PORT}
