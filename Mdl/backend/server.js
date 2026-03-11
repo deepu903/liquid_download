@@ -11,11 +11,7 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 
 // Middleware
-app.use(cors({
-    origin: '*', // Allow all origins for development
-    methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
-}));
+app.use(cors());
 app.use(helmet({
     crossOriginResourcePolicy: false,
     crossOriginEmbedderPolicy: false,
