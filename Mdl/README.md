@@ -1,40 +1,46 @@
-# SocialDownloader
+# Liquid Social Downloader
 
-This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 21.2.1.
+Liquid is a modern, high-performance web platform for downloading media from across the social web (Instagram, YouTube, TikTok, Reddit, Pinterest, etc).
 
-## Development server
+## 📁 Project Structure
 
-To start a local development server, run:
+This is a Monorepo containing both the Angular frontend and the Node.js backend:
 
-```bash
-ng serve
+- **/frontend**: Angular 21+ application (SCSS, TypeScript, anime.js)
+- **/backend**: Node.js Express server (yt-dlp engine, JSDOM scraper)
+- **/package.json**: Root manager with global commands
+
+## 🚀 Getting Started
+
+From the root directory:
+
+### 1. Install Dependencies
+
+```powershell
+npm install
+npm run install
 ```
 
-Once the server is running, open your browser and navigate to `http://localhost:4200/`. The application will automatically reload whenever you modify any of the source files.
+### 2. Development Mode
 
-## Code scaffolding
+Starts both the frontend (localhost:4200) and backend (localhost:3000):
 
-Angular CLI includes powerful code scaffolding tools. To generate a new component, run:
-
-```bash
-ng generate component component-name
+```powershell
+npm run dev
 ```
 
-For a complete list of available schematics (such as `components`, `directives`, or `pipes`), run:
+### 3. Individual Commands
 
-```bash
-ng generate --help
-```
+- `npm run start:frontend`: Just the Angular app
+- `npm run start:backend`: Just the Node server
 
-## Building
+## 🌐 Deployment
 
-To build the project run:
+This project is configured for **Railway** using **Nixpacks**.
 
-```bash
-ng build
-```
-
-This will compile your project and store the build artifacts in the `dist/` directory. By default, the production build optimizes your application for performance and speed.
+1.  **Backend Target URL**: Update `frontend/src/proxy.conf.json` with your Railway production URL.
+2.  **Root package.json**: The `npm start` command at the root is automatically configured to run the backend for easy hosting.
+    `dist/` directory. By default, the production build optimizes your application for performance and speed.
 
 ## Running unit tests
 
