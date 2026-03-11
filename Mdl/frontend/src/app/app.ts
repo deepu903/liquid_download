@@ -338,8 +338,8 @@ export class App implements AfterViewInit, OnDestroy {
       url: this.mediaUrl
     };
 
-    // Custom backend endpoint
-    const apiUrl = '/api/extract';
+    // Point directly to Railway to bypass Vercel Proxy issues
+    const apiUrl = 'https://liquiddownload.up.railway.app/api/extract';
 
     setTimeout(() => { if(this.isProcessing) this.processingStep = 'Analyzing platform...'; }, 1000);
     setTimeout(() => { if(this.isProcessing) this.processingStep = 'Extracting media links...'; }, 3000);
