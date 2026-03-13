@@ -4,14 +4,42 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const youtubedl = require('youtube-dl-exec');
 const axios = require('axios');
+const { execSync } = require('child_process');
 
 const { JSDOM } = require('jsdom');
 
 const app = express();
+// Railway injects PORT dynamically — never hardcode it
 const PORT = process.env.PORT || 8080;
 
-// Middleware
-app.use(cors());
+// Verify yt-dlp binary exists at startup
+try {
+    const ytdlpPath = execSync('which yt-dlp || where yt-dlp 2>/dev/null').toString().trim();
+    console.log(`[STARTUP] yt-dlp found at: ${ytdlpPath}`);
+} catch (e) {
+    console.error('[STARTUP] ⚠️  WARNING: yt-dlp binary NOT found! Extraction will fail.');
+}
+
+// Middleware — explicit CORS for Railway + Vercel
+const corsOptions = {
+    origin: '*',
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
+    credentials: false,
+};
+app.use(cors(corsOptions));
+
+// Manual CORS fallback headers (in case proxy strips them)
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept');
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
+    next();
+});
+
 app.use(helmet({
     crossOriginResourcePolicy: false,
     crossOriginEmbedderPolicy: false,
@@ -334,7 +362,8 @@ app.post('/api/extract', async (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`
 🚀 Liquid Media API is running!
-📡 Local: http://127.0.0.1:${PORT}
+📡 Listening on: 0.0.0.0:${PORT}
+🌍 Railway PORT env: ${process.env.PORT || 'not set (using 8080)'}
 🔧 Status: Healthy
     `);
 });

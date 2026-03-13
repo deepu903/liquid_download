@@ -1,16 +1,15 @@
 [phases.setup]
-nixPkgs = ["python3", "ffmpeg", "nodejs"]
+nixPkgs = ["python3", "ffmpeg", "nodejs", "yt-dlp"]
 
 [phases.install]
-cmds = ["npm install", "npm run install"]
+cmds = ["npm install --prefix backend"]
 
 [phases.build]
-cmds = ["npm run build"]
+cmds = []
 
 [start]
-cmd = "npm run start:backend"
+cmd = "node backend/server.js"
 
 [env]
 NODE_ENV = "production"
-PORT = "3000"
 NIXPACKS_NODE_VERSION = "20"

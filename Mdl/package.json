@@ -8,8 +8,8 @@
     "start:backend": "npm start --prefix backend",
     "dev": "npx concurrently \"npm run start:frontend\" \"npm run start:backend\"",
     "build": "npm run build --prefix frontend",
-    "install": "npm install --prefix frontend && npm install --prefix backend",
-    "install:all": "npm install && npm install --prefix frontend && npm install --prefix backend"
+    "setup": "npm install --prefix frontend && npm install --prefix backend",
+    "setup:all": "npm install && npm install --prefix frontend && npm install --prefix backend"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"
