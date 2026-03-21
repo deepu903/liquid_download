@@ -342,7 +342,7 @@ export class App implements AfterViewInit, OnDestroy {
     const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
     const apiUrl = isLocalhost 
       ? 'http://localhost:8080/api/extract' 
-      : 'https://liquiddownload.up.railway.app/api/extract';
+      : 'https://liquiddownload-production.up.railway.app/api/extract';
 
     setTimeout(() => { if(this.isProcessing) this.processingStep = 'Analyzing platform...'; }, 1000);
     setTimeout(() => { if(this.isProcessing) this.processingStep = 'Extracting media links...'; }, 3000);
