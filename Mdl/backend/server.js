@@ -14,10 +14,20 @@ const PORT = process.env.PORT || 8080;
 
 // Verify yt-dlp binary exists at startup
 try {
-    const ytdlpPath = execSync('which yt-dlp || where yt-dlp 2>/dev/null').toString().trim();
-    console.log(`[STARTUP] yt-dlp found at: ${ytdlpPath}`);
+    const ytdlpPath = execSync('which yt-dlp 2>/dev/null || where yt-dlp 2>/dev/null || find /nix /usr -name yt-dlp 2>/dev/null | head -1').toString().trim();
+    if (ytdlpPath) {
+        console.log(`[STARTUP] ✅ yt-dlp found at: ${ytdlpPath}`);
+    } else {
+        throw new Error('Not found');
+    }
 } catch (e) {
     console.error('[STARTUP] ⚠️  WARNING: yt-dlp binary NOT found! Extraction will fail.');
+    console.error('[STARTUP] PATH:', process.env.PATH);
+    // Try to locate it anyway
+    try {
+        const located = execSync('find / -name "yt-dlp" -type f 2>/dev/null | head -3').toString().trim();
+        if (located) console.log('[STARTUP] Found yt-dlp at:', located);
+    } catch (_) {}
 }
 
 // Middleware — explicit CORS for Railway + Vercel
