@@ -99,6 +99,23 @@ function formatDuration(sec) {
 // Health check
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));
 
+// Debug endpoint — shows yt-dlp binary status inside the Railway container
+app.get('/api/debug', (req, res) => {
+    let ytdlpVersion = null;
+    let ytdlpWhich = null;
+    try { ytdlpVersion = execSync(`${ytdlpBin || 'yt-dlp'} --version 2>/dev/null`).toString().trim(); } catch (_) {}
+    try { ytdlpWhich = execSync('which yt-dlp 2>/dev/null || echo "not in PATH"').toString().trim(); } catch (_) {}
+    res.json({
+        ytdlpBin,
+        ytdlpVersion,
+        ytdlpWhich,
+        path: process.env.PATH,
+        node: process.version,
+        platform: process.platform,
+    });
+});
+
+
 // Proxy download
 app.get('/api/download', async (req, res) => {
     const { url, filename } = req.query;
