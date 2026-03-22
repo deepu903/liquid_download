@@ -14,11 +14,13 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 
 // Verify yt-dlp binary exists at startup and bind it explicitly
+const path = require('path');
 const YTDLP_CANDIDATES = [
-    '/root/.local/bin/yt-dlp',   // pip install --user (Railway default)
-    '/usr/local/bin/yt-dlp',     // pip install system-wide
-    '/usr/bin/yt-dlp',           // apt/system installed
-    process.env.YTDLP_PATH || '' // optional env override
+    path.join(__dirname, 'yt-dlp'), // Downloaded via postinstall
+    '/root/.local/bin/yt-dlp',      // pip install --user
+    '/usr/local/bin/yt-dlp',        // pip install system-wide
+    '/usr/bin/yt-dlp',              // apt/system installed
+    process.env.YTDLP_PATH || ''    // optional env override
 ];
 
 let ytdlpBin = null;
