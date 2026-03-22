@@ -441,12 +441,21 @@ export class App implements AfterViewInit, OnDestroy {
       easing: 'easeOutBack'
     });
 
-    // Actually trigger the download without redirection
+    // Route the download through the backend proxy to bypass IP locks and force 'attachment' download
     if (fmt.url) {
+      const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      const backendUrl = isLocal ? 'http://localhost:8080' : 'https://liquiddownload-production.up.railway.app';
+      
+      // Clean target filename
+      const safeTitle = (this.downloadResult?.title || 'liquid_download').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const ext = fmt.type === 'Video' ? 'mp4' : (fmt.type === 'Audio' ? 'mp3' : 'jpg');
+      
+      const proxyUrl = `${backendUrl}/api/download?url=${encodeURIComponent(fmt.url)}&filename=${safeTitle}.${ext}`;
+
       const link = document.createElement('a');
-      link.href = fmt.url;
-      // The filename is already handled by the server's Content-Disposition header
+      link.href = proxyUrl;
       link.setAttribute('download', ''); 
+      link.setAttribute('target', '_blank'); // Fallback to new tab if download attribute is ignored
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
