@@ -186,6 +186,7 @@ app.post('/api/extract', async (req, res) => {
 
         // -- STAGE 1: yt-dlp --
         let output = null;
+        let ytdlpErrorDetails = null; // Variable to store yt-dlp error
         try {
             console.log(`[EXTRACT-1] Trying yt-dlp...`);
             output = await youtubedl(targetUrl, {
@@ -202,6 +203,7 @@ app.post('/api/extract', async (req, res) => {
             });
         } catch (ytErr) {
             console.warn(`[EXTRACT-1] Failed: ${ytErr.message}`);
+            ytdlpErrorDetails = ytErr.message; // Save the error message
         }
 
         // -- STAGE 2: Generic Scraper Fallback --
@@ -259,7 +261,7 @@ app.post('/api/extract', async (req, res) => {
         }
 
         if (!output) {
-            return res.status(404).json({ status: 'error', message: 'No media found. The site might be protected or private.' });
+            return res.status(404).json({ status: 'error', message: 'No media found. The site might be protected or private.', debug_error: ytdlpErrorDetails });
         }
 
         const formats = [];
