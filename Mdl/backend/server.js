@@ -13,26 +13,33 @@ const app = express();
 // Railway injects PORT dynamically — never hardcode it
 const PORT = process.env.PORT || 8080;
 
-// Verify yt-dlp binary exists at startup
-try {
-    const ytdlpPath = execSync('which yt-dlp 2>/dev/null || where yt-dlp 2>/dev/null || find /nix /usr -name yt-dlp 2>/dev/null | head -1').toString().trim();
-    if (ytdlpPath) {
-        console.log(`[STARTUP] ✅ yt-dlp found at: ${ytdlpPath}`);
-        if (typeof ytDlExec.create === 'function') {
-            youtubedl = ytDlExec.create(ytdlpPath);
-            console.log('[STARTUP] Bound youtube-dl-exec to custom binary path.');
-        }
-    } else {
-        throw new Error('Not found');
+// Verify yt-dlp binary exists at startup and bind it explicitly
+const YTDLP_CANDIDATES = [
+    '/root/.local/bin/yt-dlp',   // pip install --user (Railway default)
+    '/usr/local/bin/yt-dlp',     // pip install system-wide
+    '/usr/bin/yt-dlp',           // apt/system installed
+    process.env.YTDLP_PATH || '' // optional env override
+];
+
+let ytdlpBin = null;
+for (const candidate of YTDLP_CANDIDATES) {
+    if (!candidate) continue;
+    try { execSync(`test -x "${candidate}"`); ytdlpBin = candidate; break; } catch (_) {}
+}
+
+// Fallback: try `which`
+if (!ytdlpBin) {
+    try { ytdlpBin = execSync('which yt-dlp 2>/dev/null').toString().trim() || null; } catch (_) {}
+}
+
+if (ytdlpBin) {
+    console.log(`[STARTUP] ✅ yt-dlp found at: ${ytdlpBin}`);
+    if (typeof ytDlExec.create === 'function') {
+        youtubedl = ytDlExec.create(ytdlpBin);
+        console.log('[STARTUP] ✅ youtube-dl-exec bound to system yt-dlp.');
     }
-} catch (e) {
-    console.error('[STARTUP] ⚠️  WARNING: yt-dlp binary NOT found! Extraction will fail.');
-    console.error('[STARTUP] PATH:', process.env.PATH);
-    // Try to locate it anyway
-    try {
-        const located = execSync('find / -name "yt-dlp" -type f 2>/dev/null | head -3').toString().trim();
-        if (located) console.log('[STARTUP] Found yt-dlp at:', located);
-    } catch (_) {}
+} else {
+    console.error('[STARTUP] ❌ yt-dlp NOT found! PATH:', process.env.PATH);
 }
 
 // Middleware — explicit CORS for Railway + Vercel

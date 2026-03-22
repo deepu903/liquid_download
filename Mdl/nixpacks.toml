@@ -1,8 +1,11 @@
 [phases.setup]
-nixPkgs = ["python3", "ffmpeg", "nodejs", "yt-dlp"]
+nixPkgs = ["python3", "ffmpeg", "nodejs"]
 
 [phases.install]
-cmds = ["npm install --prefix backend"]
+cmds = [
+    "python3 -m pip install -U yt-dlp",
+    "npm install --prefix backend"
+]
 
 [phases.build]
 cmds = []
