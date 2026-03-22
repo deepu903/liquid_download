@@ -12,6 +12,7 @@
     "setup:all": "npm install && npm install --prefix frontend && npm install --prefix backend"
   },
   "devDependencies": {
+    "@angular/cli": "^21.2.3",
     "concurrently": "^9.2.1"
   }
 }
