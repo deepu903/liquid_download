@@ -2,7 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
-const youtubedl = require('youtube-dl-exec');
+const ytDlExec = require('youtube-dl-exec');
+let youtubedl = ytDlExec; // Default fallback
 const axios = require('axios');
 const { execSync } = require('child_process');
 
@@ -17,6 +18,10 @@ try {
     const ytdlpPath = execSync('which yt-dlp 2>/dev/null || where yt-dlp 2>/dev/null || find /nix /usr -name yt-dlp 2>/dev/null | head -1').toString().trim();
     if (ytdlpPath) {
         console.log(`[STARTUP] ✅ yt-dlp found at: ${ytdlpPath}`);
+        if (typeof ytDlExec.create === 'function') {
+            youtubedl = ytDlExec.create(ytdlpPath);
+            console.log('[STARTUP] Bound youtube-dl-exec to custom binary path.');
+        }
     } else {
         throw new Error('Not found');
     }
