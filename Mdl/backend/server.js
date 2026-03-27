@@ -195,14 +195,12 @@ app.post('/api/extract', async (req, res) => {
                 noPlaylist: true,
                 skipDownload: true,
                 quiet: true,
+                forceIpv4: true, // Bypass IPv6 429 Datacenter bans
                 addHeader: [
                     `referer:${referer}`,
-                    'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+                    'user-agent:Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
                 ],
-                extractorArgs: [
-                    'generic:impersonate',
-                    'youtube:player_client=ios,android,web'
-                ]
+                extractorArgs: 'youtube:player_client=android,ios'
             });
         } catch (ytErr) {
             console.warn(`[EXTRACT-1] Failed: ${ytErr.message}`);
