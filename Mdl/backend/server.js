@@ -196,10 +196,6 @@ app.post('/api/extract', async (req, res) => {
                 skipDownload: true,
                 quiet: true,
                 forceIpv4: true, // Bypass IPv6 429 Datacenter bans
-                addHeader: [
-                    `referer:${referer}`,
-                    'user-agent:Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
-                ],
                 extractorArgs: 'youtube:player_client=android,ios'
             });
         } catch (ytErr) {
@@ -209,8 +205,10 @@ app.post('/api/extract', async (req, res) => {
 
         // -- STAGE 2: Generic Scraper Fallback --
         const hasData = output && (output.formats?.length > 0 || output.entries?.length > 0 || output.url);
+        const isYouTube = targetUrl.includes('youtube.com') || targetUrl.includes('youtu.be');
         
-        if (!hasData) {
+        // Skip generic fallback for YouTube as it provides useless open-graph metadata (fake 1 format)
+        if (!hasData && !isYouTube) {
             console.log('[EXTRACT-2] Using Generic HTML Scraper...');
             try {
                 const htmlResponse = await axios.get(targetUrl, {
