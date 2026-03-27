@@ -442,36 +442,15 @@ export class App implements AfterViewInit, OnDestroy {
     });
 
     if (fmt.url) {
-      // The backend already builds a proxy URL in fmt.url like: 
-      // http://host/api/download?url=...&filename=...
-      // But it might have http:// instead of https:// in prod. We can just use the backend URL we know.
-      // Additionally, the original raw URL is actually embedded inside fmt.url as the ?url= parameter!
-      // However, to be completely fail-safe and not double-proxy, we'll extract the raw url if it was proxied.
-      
-      let rawUrl = fmt.url;
-      try {
-        const parsedProxy = new URL(fmt.url);
-        if (parsedProxy.pathname.includes('/api/download')) {
-           rawUrl = parsedProxy.searchParams.get('url') || fmt.url;
-        }
-      } catch(e) {}
-
-      const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-      const backendUrl = isLocal ? 'http://localhost:8080' : 'https://liquiddownload-production.up.railway.app';
-      
-      const safeTitle = (this.downloadResult?.title || 'liquid_download').replace(/[^a-zA-Z0-9_-]/g, '_');
-      
-      let ext = 'mp4';
-      const t = fmt.type.toLowerCase();
-      if (t === 'audio') ext = 'mp3';
-      else if (t === 'image') ext = 'jpg';
-      else if (t === 'video') ext = 'mp4';
-      else if (t !== 'media') ext = t; // Picks up 'mp4', 'webm', 'm4a'
-      
-      const proxyUrl = `${backendUrl}/api/download?url=${encodeURIComponent(rawUrl)}&filename=${safeTitle}.${ext}`;
+      // The backend has already built the precise download URL with the correct filename and extension.
+      let finalUrl = fmt.url;
+      // Guarantee HTTPS for proxy domains if the backend server accidentally emitted an http:// URL
+      if (finalUrl.startsWith('http://') && !finalUrl.includes('localhost') && !finalUrl.includes('127.0.0.1')) {
+        finalUrl = finalUrl.replace('http://', 'https://');
+      }
 
       const link = document.createElement('a');
-      link.href = proxyUrl;
+      link.href = finalUrl;
       link.setAttribute('download', ''); 
       link.setAttribute('target', '_blank'); 
       document.body.appendChild(link);
