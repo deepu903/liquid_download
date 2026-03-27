@@ -261,7 +261,9 @@ app.post('/api/extract', async (req, res) => {
         }
 
         if (!output) {
-            return res.status(404).json({ status: 'error', message: 'No media found. The site might be protected or private.', debug_error: ytdlpErrorDetails });
+            // Return 200 status even on "extraction failure" so the frontend can read the JSON error body
+            // instead of jumping to the catch/error block in Angular.
+            return res.status(200).json({ status: 'error', message: 'No media found or extraction failed. The site might be protected or link might be private.', debug_error: ytdlpErrorDetails });
         }
 
         const formats = [];
