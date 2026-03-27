@@ -441,21 +441,39 @@ export class App implements AfterViewInit, OnDestroy {
       easing: 'easeOutBack'
     });
 
-    // Route the download through the backend proxy to bypass IP locks and force 'attachment' download
     if (fmt.url) {
+      // The backend already builds a proxy URL in fmt.url like: 
+      // http://host/api/download?url=...&filename=...
+      // But it might have http:// instead of https:// in prod. We can just use the backend URL we know.
+      // Additionally, the original raw URL is actually embedded inside fmt.url as the ?url= parameter!
+      // However, to be completely fail-safe and not double-proxy, we'll extract the raw url if it was proxied.
+      
+      let rawUrl = fmt.url;
+      try {
+        const parsedProxy = new URL(fmt.url);
+        if (parsedProxy.pathname.includes('/api/download')) {
+           rawUrl = parsedProxy.searchParams.get('url') || fmt.url;
+        }
+      } catch(e) {}
+
       const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
       const backendUrl = isLocal ? 'http://localhost:8080' : 'https://liquiddownload-production.up.railway.app';
       
-      // Clean target filename
       const safeTitle = (this.downloadResult?.title || 'liquid_download').replace(/[^a-zA-Z0-9_-]/g, '_');
-      const ext = fmt.type === 'Video' ? 'mp4' : (fmt.type === 'Audio' ? 'mp3' : 'jpg');
       
-      const proxyUrl = `${backendUrl}/api/download?url=${encodeURIComponent(fmt.url)}&filename=${safeTitle}.${ext}`;
+      let ext = 'mp4';
+      const t = fmt.type.toLowerCase();
+      if (t === 'audio') ext = 'mp3';
+      else if (t === 'image') ext = 'jpg';
+      else if (t === 'video') ext = 'mp4';
+      else if (t !== 'media') ext = t; // Picks up 'mp4', 'webm', 'm4a'
+      
+      const proxyUrl = `${backendUrl}/api/download?url=${encodeURIComponent(rawUrl)}&filename=${safeTitle}.${ext}`;
 
       const link = document.createElement('a');
       link.href = proxyUrl;
       link.setAttribute('download', ''); 
-      link.setAttribute('target', '_blank'); // Fallback to new tab if download attribute is ignored
+      link.setAttribute('target', '_blank'); 
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);

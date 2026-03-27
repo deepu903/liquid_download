@@ -15,17 +15,6 @@ const PORT = process.env.PORT || 8080;
 
 // Verify yt-dlp binary exists at startup and bind it explicitly
 const path = require('path');
-
-// Process YTDLP cookies if provided securely via environment variables
-if (process.env.YTDLP_COOKIES) {
-    try {
-        fs.writeFileSync('/tmp/ytdlp-cookies.txt', process.env.YTDLP_COOKIES.replace(/\\t/g, '\t').replace(/\\n/g, '\n'));
-        console.log('[INIT] Detected YTDLP_COOKIES in environment. Wrote temporary cookies file.');
-    } catch (e) {
-        console.error('[INIT] Failed to write yt-dlp cookies to tmp:', e.message);
-    }
-}
-
 const YTDLP_CANDIDATES = [
     path.join(__dirname, 'ytdlp-bin'), // Downloaded via postinstall (cache busted)
     '/root/.local/bin/yt-dlp',      // pip install --user
@@ -200,13 +189,9 @@ app.post('/api/extract', async (req, res) => {
         let ytdlpErrorDetails = null; // Variable to store yt-dlp error
         try {
             console.log(`[EXTRACT-1] Trying yt-dlp...`);
-            
-            // Build yt-dlp options
-            const ytdlpOptions = {
+            output = await youtubedl(targetUrl, {
                 dumpSingleJson: true,
                 noCheckCertificates: true,
-                noWarnings: true,
-                preferFreeFormats: true,
                 noPlaylist: true,
                 skipDownload: true,
                 quiet: true,
@@ -215,17 +200,7 @@ app.post('/api/extract', async (req, res) => {
                     'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
                 ],
                 extractorArgs: 'generic:impersonate'
-            };
-            
-            // Attach cookies if the temporary cookie file was created from Railway env vars
-            if (fs.existsSync('/tmp/ytdlp-cookies.txt')) {
-                ytdlpOptions.cookies = '/tmp/ytdlp-cookies.txt';
-                console.log(`[EXTRACT-1] Sending authenticated request with cookies...`);
-            }
-
-            output = await youtubedl(targetUrl, ytdlpOptions);
-            
-            console.log(`[EXTRACT-1] SUCCESS with yt-dlp! Extractor: ${output?.extractor_key}`);
+            });
         } catch (ytErr) {
             console.warn(`[EXTRACT-1] Failed: ${ytErr.message}`);
             ytdlpErrorDetails = ytErr.message; // Save the error message
