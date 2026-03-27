@@ -16,11 +16,11 @@ const PORT = process.env.PORT || 8080;
 // Verify yt-dlp binary exists at startup and bind it explicitly
 const path = require('path');
 const YTDLP_CANDIDATES = [
-    path.join(__dirname, 'ytdlp-bin'), // Downloaded via postinstall (cache busted)
-    '/root/.local/bin/yt-dlp',      // pip install --user
-    '/usr/local/bin/yt-dlp',        // pip install system-wide
-    '/usr/bin/yt-dlp',              // apt/system installed
-    process.env.YTDLP_PATH || ''    // optional env override
+    'yt-dlp',                     // system path (installed via nix)
+    path.join(__dirname, 'ytdlp-bin'), 
+    '/usr/local/bin/yt-dlp',      
+    '/usr/bin/yt-dlp',            
+    process.env.YTDLP_PATH || ''  
 ];
 
 let ytdlpBin = null;
