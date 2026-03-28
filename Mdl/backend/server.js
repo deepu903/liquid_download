@@ -140,8 +140,24 @@ app.get('/api/download', async (req, res) => {
             maxRedirects: 10
         });
 
-        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename || 'download')}"`);
-        if (response.headers['content-type']) res.setHeader('Content-Type', response.headers['content-type']);
+        let finalFilename = filename || 'download';
+        const contentType = response.headers['content-type'] || '';
+        
+        // Fix: If it's an audio stream (m4a/webm), ensure the filename ends in .mp3
+        // YouTube audio-only streams are technically audio/mp4, so browsers default to .mp4
+        if (contentType.includes('audio') || (finalFilename.toLowerCase().includes('audio') && !finalFilename.includes('.'))) {
+            if (!finalFilename.toLowerCase().endsWith('.mp3')) {
+                // If it ends in .mp4 or .webm (legacy error), rename to .mp3
+                finalFilename = finalFilename.replace(/\.(mp4|webm|m4a)$/i, '') + '.mp3';
+            }
+        } else if (!finalFilename.includes('.') && contentType) {
+            // Generic extension fallback for other media
+            const ext = contentType.split('/')[1]?.split(';')[0] || 'media';
+            finalFilename += `.${ext}`;
+        }
+
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(finalFilename)}"`);
+        if (contentType) res.setHeader('Content-Type', contentType);
         if (response.headers['content-length']) res.setHeader('Content-Length', response.headers['content-length']);
 
         response.data.pipe(res);
