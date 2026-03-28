@@ -44,6 +44,25 @@ if (ytdlpBin) {
     console.error('[STARTUP] ❌ yt-dlp NOT found! PATH:', process.env.PATH);
 }
 
+// Cache PO Token at startup and refresh every 5 minutes to avoid per-request latency (502 timeout)
+let cachedPoTokenString = null;
+async function refreshPoToken() {
+    try {
+        const poGen = require('youtube-po-token-generator');
+        const tokens = await poGen.generate();
+        if (tokens && tokens.poToken && tokens.visitorData) {
+            cachedPoTokenString = `youtube:po_token=web+${tokens.poToken};youtube:player_client=web;youtube:visitor_data=${tokens.visitorData}`;
+            console.log('[PO-TOKEN] ✅ Token cached successfully.');
+        }
+    } catch (err) {
+        console.warn('[PO-TOKEN] ⚠️ Failed to generate PO token:', err.message);
+        cachedPoTokenString = null;
+    }
+}
+// Fire immediately on startup, then refresh every 5 minutes
+refreshPoToken();
+setInterval(refreshPoToken, 5 * 60 * 1000);
+
 // Middleware — explicit CORS for Railway + Vercel
 const corsOptions = {
     origin: '*',
@@ -221,36 +240,18 @@ app.post('/api/extract', async (req, res) => {
             { client: 'ios,android',      label: 'mobile (IPv4)',           forceIpv4: true }
         ];
 
-        // Zero-config PO Token Generator fallback (solves 403 / "Sign in" instantly on datacenters)
-        let dynamicPoTokenString = null;
+        // Use pre-cached PO Token (generated at startup, refreshed every 5 min) — zero per-request latency
         const isYoutubeLink = targetUrl.includes('youtube.com') || targetUrl.includes('youtu.be');
-        
-        if (isYoutubeLink && !ytdlpBaseOpts.cookies) {
-            try {
-                const poGen = require('youtube-po-token-generator');
-                console.log('[EXTRACT] Bypassing bot protection natively... Generating valid YouTube PO token & VisitorData');
-                const tokens = await poGen.generate();
-                if (tokens && tokens.poToken && tokens.visitorData) {
-                    dynamicPoTokenString = `youtube:po_token=web+${tokens.poToken};youtube:player_client=web;youtube:visitor_data=${tokens.visitorData}`;
-                    console.log('[EXTRACT] Seamless PO Token dynamically forged successfully!');
-                }
-            } catch (err) {
-                console.log('[EXTRACT] Minor PO-Generator Notice:', err.message);
-            }
+        const dynamicPoTokenString = (isYoutubeLink && !ytdlpBaseOpts.cookies) ? cachedPoTokenString : null;
+        if (dynamicPoTokenString) {
+            console.log('[EXTRACT] ✅ Using cached PO Token for bot bypass.');
         }
 
-        let strategyIndex = 0;
         for (const strategy of ytStrategies) {
-            if (strategyIndex > 0) {
-                console.log('[EXTRACT-1] Sleeping for 2s to prevent HTTP 429 Rate Limit...');
-                await new Promise(r => setTimeout(r, 2000));
-            }
-            strategyIndex++;
             try {
                 console.log(`[EXTRACT-1] Trying yt-dlp client: ${strategy.label}...`);
-                const options = { ...ytdlpBaseOpts, sleepRequests: 2 };
+                const options = { ...ytdlpBaseOpts };
                 
-                if (strategy.forceIpv6) options.forceIpv6 = true;
                 if (strategy.forceIpv4) options.forceIpv4 = true;
                 
                 if (strategy.client) {
