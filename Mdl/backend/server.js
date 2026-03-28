@@ -184,23 +184,45 @@ app.post('/api/extract', async (req, res) => {
         else if (targetUrl.includes('instagram.com')) referer = 'https://www.instagram.com/';
         else if (targetUrl.includes('tiktok.com')) referer = 'https://www.tiktok.com/';
 
-        // -- STAGE 1: yt-dlp --
+        // -- STAGE 1: yt-dlp waterfall (multiple client strategies) --
         let output = null;
-        let ytdlpErrorDetails = null; // Variable to store yt-dlp error
-        try {
-            console.log(`[EXTRACT-1] Trying yt-dlp...`);
-            output = await youtubedl(targetUrl, {
-                dumpSingleJson: true,
-                noCheckCertificates: true,
-                noPlaylist: true,
-                skipDownload: true,
-                quiet: true,
-                forceIpv4: true, // Bypass IPv6 429 Datacenter bans
-                extractorArgs: 'youtube:player_client=android,ios'
-            });
-        } catch (ytErr) {
-            console.warn(`[EXTRACT-1] Failed: ${ytErr.message}`);
-            ytdlpErrorDetails = ytErr.message; // Save the error message
+        let ytdlpErrorDetails = null;
+
+        // Strategy A: tv_embedded — bypasses 'sign in to confirm bot' on datacenter IPs
+        const ytdlpBaseOpts = {
+            dumpSingleJson: true,
+            noCheckCertificates: true,
+            noPlaylist: true,
+            skipDownload: true,
+            quiet: true,
+            forceIpv4: true,
+        };
+
+        const ytStrategies = [
+            { client: 'tv_embedded',  label: 'tv_embedded'  },
+            { client: 'mweb',         label: 'mweb'         },
+            { client: 'android',      label: 'android'      },
+        ];
+
+        for (const strategy of ytStrategies) {
+            try {
+                console.log(`[EXTRACT-1] Trying yt-dlp client: ${strategy.label}...`);
+                output = await youtubedl(targetUrl, {
+                    ...ytdlpBaseOpts,
+                    extractorArgs: `youtube:player_client=${strategy.client}`
+                });
+                const hasFormats = output && (output.formats?.length > 0 || output.url);
+                if (hasFormats) {
+                    console.log(`[EXTRACT-1] ✅ Success with client: ${strategy.label}`);
+                    break;
+                }
+                console.warn(`[EXTRACT-1] No formats from ${strategy.label}, trying next...`);
+                output = null;
+            } catch (ytErr) {
+                console.warn(`[EXTRACT-1] ${strategy.label} failed: ${ytErr.message?.split('\n')[0]}`);
+                ytdlpErrorDetails = ytErr.message;
+                output = null;
+            }
         }
 
         // -- STAGE 2: Generic Scraper Fallback --
