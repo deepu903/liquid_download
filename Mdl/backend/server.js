@@ -234,6 +234,22 @@ app.post('/api/extract', async (req, res) => {
             { client: 'android',          label: 'android (IPv4)',          forceIpv4: true }
         ];
 
+        // Zero-config PO Token Generator fallback (solves 403 / "Sign in" instantly on datacenters)
+        let dynamicPoTokenString = null;
+        if (isYouTube && !ytdlpBaseOpts.cookies) {
+            try {
+                const poGen = require('youtube-po-token-generator');
+                console.log('[EXTRACT] Bypassing bot protection natively... Generating valid YouTube PO token & VisitorData');
+                const tokens = await poGen.generate();
+                if (tokens && tokens.poToken && tokens.visitorData) {
+                    dynamicPoTokenString = `youtube:po_token=web+${tokens.poToken};youtube:player_client=web;youtube:visitor_data=${tokens.visitorData}`;
+                    console.log('[EXTRACT] Seamless PO Token dynamically forged successfully!');
+                }
+            } catch (err) {
+                console.log('[EXTRACT] Minor PO-Generator Notice:', err.message);
+            }
+        }
+
         for (const strategy of ytStrategies) {
             try {
                 console.log(`[EXTRACT-1] Trying yt-dlp client: ${strategy.label}...`);
@@ -244,6 +260,8 @@ app.post('/api/extract', async (req, res) => {
                 
                 if (strategy.client) {
                     options.extractorArgs = `youtube:player_client=${strategy.client}`;
+                } else if (dynamicPoTokenString) {
+                    options.extractorArgs = dynamicPoTokenString;
                 }
                 
                 output = await youtubedl(targetUrl, options);
