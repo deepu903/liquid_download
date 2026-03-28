@@ -217,16 +217,21 @@ app.post('/api/extract', async (req, res) => {
         }
 
         const ytStrategies = [
-            // Strategy 1: IPv6 bypassing (highly effective for Datacenter bot-blocks if supported)
-            { client: 'android',          label: 'android (IPv6)',          forceIpv6: true },
-            { client: 'ios',              label: 'ios (IPv6)',              forceIpv6: true },
-            { client: 'tv',               label: 'tv (IPv6)',               forceIpv6: true },
-            // Strategy 2: IPv4 fallback with robust combinations
-            { client: 'ios',              label: 'ios (IPv4)',              forceIpv4: true },
-            { client: 'android',          label: 'android (IPv4)',          forceIpv4: true },
+            // Stage 1: Maximum Formats (Highest Quality, but most likely to hit bot block)
+            { client: null,               label: 'default (IPv6)',          forceIpv6: true },
+            { client: 'tv,web',           label: 'tv,web (IPv6)',           forceIpv6: true },
+            { client: 'web_creator',      label: 'web_creator (IPv6)',      forceIpv6: true },
+            
+            // Stage 2: Attempt standard max-format clients via IPv4
+            { client: null,               label: 'default (IPv4)',          forceIpv4: true },
             { client: 'tv,web',           label: 'tv,web (IPv4)',           forceIpv4: true },
             { client: 'web_creator',      label: 'web_creator (IPv4)',      forceIpv4: true },
-            { client: null,               label: 'default (IPv4)',          forceIpv4: true },
+
+            // Stage 3: Aggressive Fallbacks (Returns only 1~3 formats (e.g. 360p), but greatly bypasses bot checks)
+            { client: 'ios',              label: 'ios (IPv6)',              forceIpv6: true },
+            { client: 'android',          label: 'android (IPv6)',          forceIpv6: true },
+            { client: 'ios',              label: 'ios (IPv4)',              forceIpv4: true },
+            { client: 'android',          label: 'android (IPv4)',          forceIpv4: true }
         ];
 
         for (const strategy of ytStrategies) {
