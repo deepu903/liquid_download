@@ -196,21 +196,26 @@ app.post('/api/extract', async (req, res) => {
             skipDownload: true,
             quiet: true,
             forceIpv4: true,
+            rmCacheDir: true,
         };
 
         const ytStrategies = [
-            { client: 'tv_embedded',  label: 'tv_embedded'  },
-            { client: 'mweb',         label: 'mweb'         },
-            { client: 'android',      label: 'android'      },
+            { client: 'ios',              label: 'ios'              },
+            { client: 'android',          label: 'android'          },
+            { client: 'tv',               label: 'tv'               },
+            { client: 'web_creator',      label: 'web_creator'      },
+            { client: 'mweb',             label: 'mweb'             },
         ];
 
         for (const strategy of ytStrategies) {
             try {
                 console.log(`[EXTRACT-1] Trying yt-dlp client: ${strategy.label}...`);
-                output = await youtubedl(targetUrl, {
-                    ...ytdlpBaseOpts,
-                    extractorArgs: `youtube:player_client=${strategy.client}`
-                });
+                const options = { ...ytdlpBaseOpts };
+                if (strategy.client) {
+                    options.extractorArgs = `youtube:player_client=${strategy.client}`;
+                }
+                
+                output = await youtubedl(targetUrl, options);
                 const hasFormats = output && (output.formats?.length > 0 || output.url);
                 if (hasFormats) {
                     console.log(`[EXTRACT-1] ✅ Success with client: ${strategy.label}`);
