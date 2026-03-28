@@ -402,7 +402,7 @@ app.post('/api/extract', async (req, res) => {
                     seenUrls.add(f.url);
                     formats.push({
                         quality: qualityLabel + (isVideo && !isAudio ? ' [No Audio]' : ''),
-                        type: isVideo ? f.ext.toUpperCase() : 'Audio',
+                        type: isVideo ? f.ext.toUpperCase() : 'MP3',
                         url: f.url,
                         size: formatBytes(f.filesize || f.filesize_approx),
                         icon: isVideo ? (isAudio ? 'fa-film' : 'fa-video-slash') : 'fa-music',
@@ -427,22 +427,28 @@ app.post('/api/extract', async (req, res) => {
             }
         }
 
-        // 6. Explicit Audio Option Injection
-        // Guarantee an Audio format exists for the user, even if yt-dlp was restricted to multiplexed mobile API streams
-        const hasAudioOption = formats.some(f => f.type.toLowerCase() === 'audio');
+        // 6. Explicit Audio Option Injection (MP3/M4A)
+        // Guarantee an Audio format exists for the user
+        const hasAudioOption = formats.some(f => f.type.toLowerCase().includes('audio'));
         if (!hasAudioOption && formats.length > 0) {
-            // Find a valid stream that contains audio, prioritizing highest available 
             let targetUrl = formats[0].url;
+            let audioExt = 'm4a';
+
             if (output.formats?.length > 0) {
-                const audioStreams = output.formats.filter(f => f.acodec !== 'none');
-                if (audioStreams.length > 0) targetUrl = audioStreams[audioStreams.length - 1].url;
+                // Find pure audio-only formats (vcodec=none) as they are the only ones that work for .mp3 target
+                const pureAudios = output.formats.filter(f => f.vcodec === 'none' && f.acodec !== 'none');
+                if (pureAudios.length > 0) {
+                    const bestAudio = pureAudios.find(f => f.ext === 'm4a') || pureAudios[0];
+                    targetUrl = bestAudio.url;
+                    audioExt = bestAudio.ext;
+                }
             }
             
             formats.push({
-                quality: 'High (Extracted)',
-                type: 'Audio',
+                quality: 'High (MP3)',
+                type: 'MP3',
                 url: targetUrl,
-                size: 'Format',
+                size: 'Audio',
                 icon: 'fa-music',
                 badge: 'Audio'
             });
