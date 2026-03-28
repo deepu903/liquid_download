@@ -217,14 +217,8 @@ app.post('/api/extract', async (req, res) => {
         }
 
         const ytStrategies = [
-            // Stage 1: Maximum Formats via standard IPv4
             { client: null,               label: 'default (IPv4)',          forceIpv4: true },
-            { client: 'tv,web',           label: 'tv,web (IPv4)',           forceIpv4: true },
-            { client: 'web_creator',      label: 'web_creator (IPv4)',      forceIpv4: true },
-
-            // Stage 2: Aggressive Fallbacks (Returns limited formats but natively bypasses tough bot checks)
-            { client: 'ios',              label: 'ios (IPv4)',              forceIpv4: true },
-            { client: 'android',          label: 'android (IPv4)',          forceIpv4: true }
+            { client: 'ios,android',      label: 'mobile (IPv4)',           forceIpv4: true }
         ];
 
         // Zero-config PO Token Generator fallback (solves 403 / "Sign in" instantly on datacenters)
@@ -245,10 +239,16 @@ app.post('/api/extract', async (req, res) => {
             }
         }
 
+        let strategyIndex = 0;
         for (const strategy of ytStrategies) {
+            if (strategyIndex > 0) {
+                console.log('[EXTRACT-1] Sleeping for 2s to prevent HTTP 429 Rate Limit...');
+                await new Promise(r => setTimeout(r, 2000));
+            }
+            strategyIndex++;
             try {
                 console.log(`[EXTRACT-1] Trying yt-dlp client: ${strategy.label}...`);
-                const options = { ...ytdlpBaseOpts };
+                const options = { ...ytdlpBaseOpts, sleepRequests: 2 };
                 
                 if (strategy.forceIpv6) options.forceIpv6 = true;
                 if (strategy.forceIpv4) options.forceIpv4 = true;
