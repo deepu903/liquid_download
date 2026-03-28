@@ -8,13 +8,14 @@
     "postinstall": "curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux -o ytdlp-bin && chmod a+rx ytdlp-bin"
   },
   "dependencies": {
-    "express": "^4.18.2",
+    "axios": "^1.6.2",
     "cors": "^2.8.5",
+    "express": "^4.18.2",
     "helmet": "^7.1.0",
+    "jsdom": "^23.0.0",
     "morgan": "^1.10.0",
     "youtube-dl-exec": "^2.4.9",
-    "axios": "^1.6.2",
-    "jsdom": "^23.0.0"
+    "youtube-po-token-generator": "^0.6.0"
   },
   "private": true
 }
