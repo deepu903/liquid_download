@@ -428,6 +428,27 @@ app.post('/api/extract', async (req, res) => {
             }
         }
 
+        // 6. Explicit Audio Option Injection
+        // Guarantee an Audio format exists for the user, even if yt-dlp was restricted to multiplexed mobile API streams
+        const hasAudioOption = formats.some(f => f.type.toLowerCase() === 'audio');
+        if (!hasAudioOption && formats.length > 0) {
+            // Find a valid stream that contains audio, prioritizing highest available 
+            let targetUrl = formats[0].url;
+            if (output.formats?.length > 0) {
+                const audioStreams = output.formats.filter(f => f.acodec !== 'none');
+                if (audioStreams.length > 0) targetUrl = audioStreams[audioStreams.length - 1].url;
+            }
+            
+            formats.push({
+                quality: 'High (Extracted)',
+                type: 'Audio',
+                url: targetUrl,
+                size: 'Format',
+                icon: 'fa-music',
+                badge: 'Audio'
+            });
+        }
+
         const responsePayload = {
             status: 'success',
             title: output.title || 'Liquid Download',
@@ -438,6 +459,8 @@ app.post('/api/extract', async (req, res) => {
                 if (ext === 'image') {
                     const match = f.url.match(/\.(jpg|jpeg|png|webp|gif)/i);
                     ext = match ? match[1] : 'jpg';
+                } else if (ext === 'audio') {
+                    ext = 'm4a'; // Muxed mp4 audio natively plays correctly as m4a
                 }
                 const sanitizedTitle = (output.title || 'media').substring(0, 50).replace(/[^a-z0-9]/gi, '_');
                 const host = req.get('host');
