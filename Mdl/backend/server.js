@@ -236,7 +236,9 @@ app.post('/api/extract', async (req, res) => {
 
         // Zero-config PO Token Generator fallback (solves 403 / "Sign in" instantly on datacenters)
         let dynamicPoTokenString = null;
-        if (isYouTube && !ytdlpBaseOpts.cookies) {
+        const isYoutubeLink = targetUrl.includes('youtube.com') || targetUrl.includes('youtu.be');
+        
+        if (isYoutubeLink && !ytdlpBaseOpts.cookies) {
             try {
                 const poGen = require('youtube-po-token-generator');
                 console.log('[EXTRACT] Bypassing bot protection natively... Generating valid YouTube PO token & VisitorData');
