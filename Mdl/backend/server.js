@@ -44,24 +44,6 @@ if (ytdlpBin) {
     console.error('[STARTUP] ❌ yt-dlp NOT found! PATH:', process.env.PATH);
 }
 
-// Cache PO Token at startup and refresh every 5 minutes to avoid per-request latency (502 timeout)
-let cachedPoTokenString = null;
-async function refreshPoToken() {
-    try {
-        const poGen = require('youtube-po-token-generator');
-        const tokens = await poGen.generate();
-        if (tokens && tokens.poToken && tokens.visitorData) {
-            cachedPoTokenString = `youtube:po_token=web+${tokens.poToken};youtube:player_client=web;youtube:visitor_data=${tokens.visitorData}`;
-            console.log('[PO-TOKEN] ✅ Token cached successfully.');
-        }
-    } catch (err) {
-        console.warn('[PO-TOKEN] ⚠️ Failed to generate PO token:', err.message);
-        cachedPoTokenString = null;
-    }
-}
-// Fire immediately on startup, then refresh every 5 minutes
-refreshPoToken();
-setInterval(refreshPoToken, 5 * 60 * 1000);
 
 // Middleware — explicit CORS for Railway + Vercel
 const corsOptions = {
@@ -235,30 +217,29 @@ app.post('/api/extract', async (req, res) => {
             console.log('[EXTRACT] Using local cookies.txt file.');
         }
 
-        const ytStrategies = [
-            { client: null,               label: 'default (IPv4)',          forceIpv4: true },
-            { client: 'ios,android',      label: 'mobile (IPv4)',           forceIpv4: true }
+        const isYoutubeLink = targetUrl.includes('youtube.com') || targetUrl.includes('youtu.be');
+
+        // Robust strategies for datacenter IPs
+        const ytStrategies = isYoutubeLink ? [
+            { client: 'tv_embedded', label: 'tv_embedded (IPv4)', forceIpv4: true },
+            { client: 'web,tv',      label: 'web,tv (IPv4)',      forceIpv4: true },
+            { client: 'android',     label: 'android (IPv4)',     forceIpv4: true }
+        ] : [
+            { client: null, label: 'default', forceIpv4: true }
         ];
 
-        // Use pre-cached PO Token (generated at startup, refreshed every 5 min) — zero per-request latency
-        const isYoutubeLink = targetUrl.includes('youtube.com') || targetUrl.includes('youtu.be');
-        const dynamicPoTokenString = (isYoutubeLink && !ytdlpBaseOpts.cookies) ? cachedPoTokenString : null;
-        if (dynamicPoTokenString) {
-            console.log('[EXTRACT] ✅ Using cached PO Token for bot bypass.');
-        }
-
+        let strategyIndex = 0;
         for (const strategy of ytStrategies) {
+            if (strategyIndex > 0) {
+                console.log('[EXTRACT-1] Sleeping for 2s to prevent HTTP 429 Rate Limit...');
+                await new Promise(r => setTimeout(r, 2000));
+            }
+            strategyIndex++;
             try {
                 console.log(`[EXTRACT-1] Trying yt-dlp client: ${strategy.label}...`);
                 const options = { ...ytdlpBaseOpts };
-                
                 if (strategy.forceIpv4) options.forceIpv4 = true;
-                
-                if (strategy.client) {
-                    options.extractorArgs = `youtube:player_client=${strategy.client}`;
-                } else if (dynamicPoTokenString) {
-                    options.extractorArgs = dynamicPoTokenString;
-                }
+                if (strategy.client) options.extractorArgs = `youtube:player_client=${strategy.client}`;
                 
                 output = await youtubedl(targetUrl, options);
                 const hasFormats = output && (output.formats?.length > 0 || output.url);
