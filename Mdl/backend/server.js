@@ -188,29 +188,55 @@ app.post('/api/extract', async (req, res) => {
         let output = null;
         let ytdlpErrorDetails = null;
 
-        // Strategy A: tv_embedded — bypasses 'sign in to confirm bot' on datacenter IPs
+        // Strategy A: Advanced bot block bypass tree (IPv6 & Cookies)
         const ytdlpBaseOpts = {
             dumpSingleJson: true,
             noCheckCertificates: true,
             noPlaylist: true,
             skipDownload: true,
             quiet: true,
-            forceIpv4: true,
             rmCacheDir: true,
         };
 
+        const fs = require('fs');
+        const os = require('os');
+        
+        // Dynamically load cookies if provided via Railway Env Var to bypass 100% of bot checks
+        if (process.env.YOUTUBE_COOKIES) {
+            try {
+                const cookiePath = path.join(os.tmpdir(), 'yt-cookies.txt');
+                fs.writeFileSync(cookiePath, process.env.YOUTUBE_COOKIES);
+                ytdlpBaseOpts.cookies = cookiePath;
+                console.log('[EXTRACT] Using YOUTUBE_COOKIES from environment variables.');
+            } catch (e) {
+                console.error('[EXTRACT] Failed to write cookies file:', e.message);
+            }
+        } else if (fs.existsSync(path.join(__dirname, 'cookies.txt'))) {
+            ytdlpBaseOpts.cookies = path.join(__dirname, 'cookies.txt');
+            console.log('[EXTRACT] Using local cookies.txt file.');
+        }
+
         const ytStrategies = [
-            { client: 'ios',              label: 'ios'              },
-            { client: 'android',          label: 'android'          },
-            { client: 'tv',               label: 'tv'               },
-            { client: 'web_creator',      label: 'web_creator'      },
-            { client: 'mweb',             label: 'mweb'             },
+            // Strategy 1: IPv6 bypassing (highly effective for Datacenter bot-blocks if supported)
+            { client: 'android',          label: 'android (IPv6)',          forceIpv6: true },
+            { client: 'ios',              label: 'ios (IPv6)',              forceIpv6: true },
+            { client: 'tv',               label: 'tv (IPv6)',               forceIpv6: true },
+            // Strategy 2: IPv4 fallback with robust combinations
+            { client: 'ios',              label: 'ios (IPv4)',              forceIpv4: true },
+            { client: 'android',          label: 'android (IPv4)',          forceIpv4: true },
+            { client: 'tv,web',           label: 'tv,web (IPv4)',           forceIpv4: true },
+            { client: 'web_creator',      label: 'web_creator (IPv4)',      forceIpv4: true },
+            { client: null,               label: 'default (IPv4)',          forceIpv4: true },
         ];
 
         for (const strategy of ytStrategies) {
             try {
                 console.log(`[EXTRACT-1] Trying yt-dlp client: ${strategy.label}...`);
                 const options = { ...ytdlpBaseOpts };
+                
+                if (strategy.forceIpv6) options.forceIpv6 = true;
+                if (strategy.forceIpv4) options.forceIpv4 = true;
+                
                 if (strategy.client) {
                     options.extractorArgs = `youtube:player_client=${strategy.client}`;
                 }
