@@ -219,11 +219,11 @@ app.post('/api/extract', async (req, res) => {
 
         const isYoutubeLink = targetUrl.includes('youtube.com') || targetUrl.includes('youtu.be');
 
-        // Robust strategies for datacenter IPs
+        // Most robust clients for datacenter IPs in 2024
         const ytStrategies = isYoutubeLink ? [
             { client: 'tv_embedded', label: 'tv_embedded (IPv4)', forceIpv4: true },
-            { client: 'web,tv',      label: 'web,tv (IPv4)',      forceIpv4: true },
-            { client: 'android',     label: 'android (IPv4)',     forceIpv4: true }
+            { client: 'android',     label: 'android (IPv4)',     forceIpv4: true },
+            { client: 'ios',         label: 'ios (IPv4)',         forceIpv4: true }
         ] : [
             { client: null, label: 'default', forceIpv4: true }
         ];
@@ -231,12 +231,12 @@ app.post('/api/extract', async (req, res) => {
         let strategyIndex = 0;
         for (const strategy of ytStrategies) {
             if (strategyIndex > 0) {
-                console.log('[EXTRACT-1] Sleeping for 2s to prevent HTTP 429 Rate Limit...');
-                await new Promise(r => setTimeout(r, 2000));
+                console.log('[EXTRACT-1] Throttling for 1.5s to prevent 429 errors...');
+                await new Promise(r => setTimeout(r, 1500));
             }
             strategyIndex++;
             try {
-                console.log(`[EXTRACT-1] Trying yt-dlp client: ${strategy.label}...`);
+                console.log(`[EXTRACT-1] Trying client: ${strategy.label}...`);
                 const options = { ...ytdlpBaseOpts };
                 if (strategy.forceIpv4) options.forceIpv4 = true;
                 if (strategy.client) options.extractorArgs = `youtube:player_client=${strategy.client}`;
@@ -244,14 +244,18 @@ app.post('/api/extract', async (req, res) => {
                 output = await youtubedl(targetUrl, options);
                 const hasFormats = output && (output.formats?.length > 0 || output.url);
                 if (hasFormats) {
-                    console.log(`[EXTRACT-1] ✅ Success with client: ${strategy.label}`);
+                    console.log(`[EXTRACT-1] ✅ Success with ${strategy.label}`);
                     break;
                 }
                 console.warn(`[EXTRACT-1] No formats from ${strategy.label}, trying next...`);
                 output = null;
             } catch (ytErr) {
-                console.warn(`[EXTRACT-1] ${strategy.label} failed: ${ytErr.message?.split('\n')[0]}`);
+                const errMsg = ytErr.message?.split('\n')[0];
+                console.warn(`[EXTRACT-1] ${strategy.label} failed: ${errMsg}`);
                 ytdlpErrorDetails = ytErr.message;
+                // If the error is a definitive "Sign in required" on the best client, 
+                // it's likely a persistent IP ban on Railway.
+                if (errMsg.includes('Sign in to confirm')) break;
                 output = null;
             }
         }
