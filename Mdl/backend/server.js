@@ -140,8 +140,24 @@ app.get('/api/download', async (req, res) => {
             maxRedirects: 10
         });
 
-        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename || 'download')}"`);
-        if (response.headers['content-type']) res.setHeader('Content-Type', response.headers['content-type']);
+        let finalFilename = filename || 'download';
+        const contentType = response.headers['content-type'] || '';
+        
+        // Fix: If it's an audio stream (m4a/webm), ensure the filename ends in .mp3
+        // YouTube audio-only streams are technically audio/mp4, so browsers default to .mp4
+        if (contentType.includes('audio') || (finalFilename.toLowerCase().includes('audio') && !finalFilename.includes('.'))) {
+            if (!finalFilename.toLowerCase().endsWith('.mp3')) {
+                // If it ends in .mp4 or .webm (legacy error), rename to .mp3
+                finalFilename = finalFilename.replace(/\.(mp4|webm|m4a)$/i, '') + '.mp3';
+            }
+        } else if (!finalFilename.includes('.') && contentType) {
+            // Generic extension fallback for other media
+            const ext = contentType.split('/')[1]?.split(';')[0] || 'media';
+            finalFilename += `.${ext}`;
+        }
+
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(finalFilename)}"`);
+        if (contentType) res.setHeader('Content-Type', contentType);
         if (response.headers['content-length']) res.setHeader('Content-Length', response.headers['content-length']);
 
         response.data.pipe(res);
@@ -402,7 +418,7 @@ app.post('/api/extract', async (req, res) => {
                     seenUrls.add(f.url);
                     formats.push({
                         quality: qualityLabel + (isVideo && !isAudio ? ' [No Audio]' : ''),
-                        type: isVideo ? f.ext.toUpperCase() : 'Audio',
+                        type: isVideo ? f.ext.toUpperCase() : 'MP3',
                         url: f.url,
                         size: formatBytes(f.filesize || f.filesize_approx),
                         icon: isVideo ? (isAudio ? 'fa-film' : 'fa-video-slash') : 'fa-music',
@@ -427,22 +443,28 @@ app.post('/api/extract', async (req, res) => {
             }
         }
 
-        // 6. Explicit Audio Option Injection
-        // Guarantee an Audio format exists for the user, even if yt-dlp was restricted to multiplexed mobile API streams
-        const hasAudioOption = formats.some(f => f.type.toLowerCase() === 'audio');
+        // 6. Explicit Audio Option Injection (MP3/M4A)
+        // Guarantee an Audio format exists for the user
+        const hasAudioOption = formats.some(f => f.type.toLowerCase().includes('audio'));
         if (!hasAudioOption && formats.length > 0) {
-            // Find a valid stream that contains audio, prioritizing highest available 
             let targetUrl = formats[0].url;
+            let audioExt = 'm4a';
+
             if (output.formats?.length > 0) {
-                const audioStreams = output.formats.filter(f => f.acodec !== 'none');
-                if (audioStreams.length > 0) targetUrl = audioStreams[audioStreams.length - 1].url;
+                // Find pure audio-only formats (vcodec=none) as they are the only ones that work for .mp3 target
+                const pureAudios = output.formats.filter(f => f.vcodec === 'none' && f.acodec !== 'none');
+                if (pureAudios.length > 0) {
+                    const bestAudio = pureAudios.find(f => f.ext === 'm4a') || pureAudios[0];
+                    targetUrl = bestAudio.url;
+                    audioExt = bestAudio.ext;
+                }
             }
             
             formats.push({
-                quality: 'High (Extracted)',
-                type: 'Audio',
+                quality: 'High (MP3)',
+                type: 'MP3',
                 url: targetUrl,
-                size: 'Format',
+                size: 'Audio',
                 icon: 'fa-music',
                 badge: 'Audio'
             });
