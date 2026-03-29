@@ -151,37 +151,55 @@ app.get('/api/download', async (req, res) => {
             res.setHeader('Content-Type', 'audio/mpeg');
             res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(finalFilename)}"`);
             
-            // Real-time conversion to MP3 using FFmpeg (available on Railway nixpacks)
+            // Spawn FFmpeg for real-time MP3 re-encoding
             const { spawn } = require('child_process');
             const ffmpeg = spawn('ffmpeg', [
                 '-i', 'pipe:0',
                 '-f', 'mp3',
                 '-acodec', 'libmp3lame',
                 '-ab', '192k',
+                '-y',
                 'pipe:1'
             ]);
 
-            console.log(`[PROXY] Converting to MP3: ${finalFilename}`);
+            console.log(`[PROXY] Starting MP3 Conversion: ${finalFilename}`);
+
+            // Bridge response to browser
             response.data.pipe(ffmpeg.stdin);
             ffmpeg.stdout.pipe(res);
 
-            ffmpeg.stderr.on('data', (data) => { /* debug logs if needed */ });
+            // Important: Handle cancellation to prevent orphan processes on Railway
+            res.on('close', () => {
+                if (!ffmpeg.killed) {
+                    console.log(`[PROXY] Request closed. Terminating FFmpeg for: ${finalFilename}`);
+                    ffmpeg.kill('SIGKILL');
+                }
+            });
+
+            // Error mapping for the bridge
             ffmpeg.on('error', (err) => {
                 console.error('[FFMPEG ERROR]', err.message);
-                if (!res.headersSent) res.status(500).send('Conversion failed');
+                if (!res.headersSent) res.status(500).send('Conversion backend failure');
             });
+
+            response.data.on('error', (err) => {
+                console.error('[STRM-IN ERROR]', err.message);
+                ffmpeg.kill();
+            });
+
             return;
         }
 
-        // Generic stream for video
+        // Standard Stream (Video/Other)
         res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(finalFilename)}"`);
         if (contentType) res.setHeader('Content-Type', contentType);
         if (response.headers['content-length']) res.setHeader('Content-Length', response.headers['content-length']);
+        
         response.data.pipe(res);
 
         response.data.on('error', (err) => {
             console.error('[STREAM ERROR]', err.message);
-            if (!res.headersSent) res.status(500).send('Stream error');
+            if (!res.headersSent) res.status(500).send('Stream relay error');
         });
 
     } catch (error) {
