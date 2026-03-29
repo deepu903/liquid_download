@@ -131,10 +131,11 @@ app.get('/api/download', async (req, res) => {
             method: 'get',
             url: url,
             responseType: 'stream',
-            timeout: 60000, // Increased timeout for heavy files
+            timeout: 60000, 
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                 'Accept': '*/*',
+                'Referer': 'https://www.google.com/',
                 'Connection': 'keep-alive'
             },
             maxRedirects: 10
@@ -151,46 +152,44 @@ app.get('/api/download', async (req, res) => {
             res.setHeader('Content-Type', 'audio/mpeg');
             res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(finalFilename)}"`);
             
-            // Spawn FFmpeg for real-time MP3 re-encoding
+            // Spawn FFmpeg with fallback and improved codec compatibility
             const { spawn } = require('child_process');
             const ffmpeg = spawn('ffmpeg', [
                 '-i', 'pipe:0',
                 '-f', 'mp3',
                 '-acodec', 'libmp3lame',
                 '-ab', '192k',
+                '-ar', '44100',
                 '-y',
                 'pipe:1'
-            ]);
+            ], { stdio: ['pipe', 'pipe', 'ignore'] }); // Ignore stderr to avoid buffer bloat
 
-            console.log(`[PROXY] Starting MP3 Conversion: ${finalFilename}`);
-
-            // Bridge response to browser
+            console.log(`[PROXY] Converting to MP3: ${finalFilename}`);
             response.data.pipe(ffmpeg.stdin);
             ffmpeg.stdout.pipe(res);
 
-            // Important: Handle cancellation to prevent orphan processes on Railway
             res.on('close', () => {
-                if (!ffmpeg.killed) {
-                    console.log(`[PROXY] Request closed. Terminating FFmpeg for: ${finalFilename}`);
-                    ffmpeg.kill('SIGKILL');
+                if (!ffmpeg.killed) ffmpeg.kill('SIGKILL');
+            });
+
+            ffmpeg.on('error', (err) => {
+                console.warn('[FFMPEG WARN] Falling back to direct stream:', err.message);
+                if (!res.headersSent) {
+                    res.setHeader('Content-Type', contentType);
+                    response.data.pipe(res);
                 }
             });
 
-            // Error mapping for the bridge
-            ffmpeg.on('error', (err) => {
-                console.error('[FFMPEG ERROR]', err.message);
-                if (!res.headersSent) res.status(500).send('Conversion backend failure');
-            });
-
             response.data.on('error', (err) => {
-                console.error('[STRM-IN ERROR]', err.message);
+                console.error('[STREAM-IN] Error:', err.message);
                 ffmpeg.kill();
+                if (!res.headersSent) res.status(500).send('Source stream error');
             });
 
             return;
         }
 
-        // Standard Stream (Video/Other)
+        // --- Standard Relay (Video) ---
         res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(finalFilename)}"`);
         if (contentType) res.setHeader('Content-Type', contentType);
         if (response.headers['content-length']) res.setHeader('Content-Length', response.headers['content-length']);
@@ -198,8 +197,8 @@ app.get('/api/download', async (req, res) => {
         response.data.pipe(res);
 
         response.data.on('error', (err) => {
-            console.error('[STREAM ERROR]', err.message);
-            if (!res.headersSent) res.status(500).send('Stream relay error');
+            console.error('[STRM-RELAY] Error:', err.message);
+            if (!res.headersSent) res.status(500).send('Relay failure');
         });
 
     } catch (error) {
