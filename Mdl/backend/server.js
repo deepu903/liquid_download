@@ -223,6 +223,7 @@ app.post('/api/extract', async (req, res) => {
         let ytdlpErrorDetails = null;
 
         // Strategy A: Advanced bot block bypass tree (IPv6 & Cookies)
+        // Hardened options to mimic a real human browser and bypass bot detection
         const ytdlpBaseOpts = {
             dumpSingleJson: true,
             noCheckCertificates: true,
@@ -230,46 +231,46 @@ app.post('/api/extract', async (req, res) => {
             skipDownload: true,
             quiet: true,
             rmCacheDir: true,
+            // Mimic a real Chrome/Firefox browser — this is crucial for datacenter IPs
+            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            addHeader: [
+                'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept-Language: en-US,en;q=0.9',
+                'Referer: https://www.google.com/',
+                'Sec-Fetch-Mode: navigate',
+            ],
+            // Skip DASH manifests which often trigger the bot-wall early
+            youtubeSkipDashManifest: true,
+            youtubeSkipHlsManifest: false
         };
 
         const fs = require('fs');
         const os = require('os');
         
-        // Dynamically load cookies if provided via Railway Env Var to bypass 100% of bot checks
+        // Use cookies if provided, but if not, proceed with hardened extraction
         if (process.env.YOUTUBE_COOKIES) {
             try {
                 const cookiePath = path.join(os.tmpdir(), 'yt-cookies.txt');
                 fs.writeFileSync(cookiePath, process.env.YOUTUBE_COOKIES);
                 ytdlpBaseOpts.cookies = cookiePath;
-                console.log('[EXTRACT] Using YOUTUBE_COOKIES from environment variables.');
-            } catch (e) {
-                console.error('[EXTRACT] Failed to write cookies file:', e.message);
-            }
-        } else if (fs.existsSync(path.join(__dirname, 'cookies.txt'))) {
-            ytdlpBaseOpts.cookies = path.join(__dirname, 'cookies.txt');
-            console.log('[EXTRACT] Using local cookies.txt file.');
+            } catch (e) {}
         }
 
         const isYoutubeLink = targetUrl.includes('youtube.com') || targetUrl.includes('youtu.be');
 
-        // Most robust clients for datacenter IPs in 2024
+        // Waterfall to try specialized clients sequentially
         const ytStrategies = isYoutubeLink ? [
-            { client: 'tv_embedded', label: 'tv_embedded (IPv4)', forceIpv4: true },
-            { client: 'android',     label: 'android (IPv4)',     forceIpv4: true },
-            { client: 'ios',         label: 'ios (IPv4)',         forceIpv4: true }
+            { client: 'ios',         label: 'ios (Robo-Bypass)', forceIpv4: true },
+            { client: 'tv_embedded', label: 'tv_embedded (Formats)', forceIpv4: true },
+            { client: 'android',     label: 'android (Robust)',   forceIpv4: true },
+            { client: 'tv',          label: 'tv (Fallback)',      forceIpv4: true }
         ] : [
             { client: null, label: 'default', forceIpv4: true }
         ];
 
-        let strategyIndex = 0;
         for (const strategy of ytStrategies) {
-            if (strategyIndex > 0) {
-                console.log('[EXTRACT-1] Throttling for 1.5s to prevent 429 errors...');
-                await new Promise(r => setTimeout(r, 1500));
-            }
-            strategyIndex++;
             try {
-                console.log(`[EXTRACT-1] Trying client: ${strategy.label}...`);
+                console.log(`[EXTRACT-1] Mimicking Browser - Trying client: ${strategy.label}...`);
                 const options = { ...ytdlpBaseOpts };
                 if (strategy.forceIpv4) options.forceIpv4 = true;
                 if (strategy.client) options.extractorArgs = `youtube:player_client=${strategy.client}`;
@@ -286,10 +287,12 @@ app.post('/api/extract', async (req, res) => {
                 const errMsg = ytErr.message?.split('\n')[0];
                 console.warn(`[EXTRACT-1] ${strategy.label} failed: ${errMsg}`);
                 ytdlpErrorDetails = ytErr.message;
-                // If the error is a definitive "Sign in required" on the best client, 
-                // it's likely a persistent IP ban on Railway.
-                if (errMsg.includes('Sign in to confirm')) break;
+                
+                // Keep trying other clients even if one says "Sign in"
                 output = null;
+                
+                // Add a small delay to avoid triggering 429 after a failure
+                await new Promise(r => setTimeout(r, 2000));
             }
         }
 
