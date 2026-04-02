@@ -149,69 +149,30 @@ app.get('/api/download', async (req, res) => {
         }
 
         const response = await axios(axiosOpts);
-
-        let finalFilename = filename || 'download';
+        const finalFilename = filename || 'download';
         const contentType = response.headers['content-type'] || '';
-        const isAudioDownload = contentType.includes('audio') || finalFilename.toLowerCase().endsWith('.mp3');
-
-        if (isAudioDownload) {
-            if (!finalFilename.toLowerCase().endsWith('.mp3')) {
-                finalFilename = finalFilename.replace(/\.(mp4|webm|m4a)$/i, '') + '.mp3';
-            }
-            res.setHeader('Content-Type', 'audio/mpeg');
-            res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(finalFilename)}"`);
-            
-            const ffmpeg = spawn('ffmpeg', [
-                '-fflags', '+genpts', // Fix timestamps so player knows song length
-                '-i', 'pipe:0',
-                '-f', 'mp3',
-                '-acodec', 'libmp3lame',
-                '-b:a', '192k',
-                '-ar', '44100',
-                '-id3v2_version', '3',
-                '-write_id3v1', '1',
-                '-y',
-                'pipe:1'
-            ], { stdio: ['pipe', 'pipe', 'ignore'] });
-
-            console.log(`[PROXY] Re-encoding full stream: ${finalFilename}`);
-            
-            // Bridge streams
-            response.data.pipe(ffmpeg.stdin, { end: true });
-            ffmpeg.stdout.pipe(res);
-
-            res.on('close', () => {
-                if (!ffmpeg.killed) ffmpeg.kill('SIGKILL');
-            });
-
-            ffmpeg.on('error', (err) => {
-                console.warn('[FFMPEG WARN] Falling back to direct stream:', err.message);
-                if (!res.headersSent) {
-                    res.setHeader('Content-Type', contentType);
-                    response.data.pipe(res);
-                }
-            });
-
-            response.data.on('error', (err) => {
-                console.error('[STREAM-IN] Error:', err.message);
-                ffmpeg.kill();
-                if (!res.headersSent) res.status(500).send('Source stream error');
-            });
-
-            return;
+        
+        // --- High-Reliability Direct Relay ---
+        // Delivers the original, perfect-quality source stream without conversion
+        res.setHeader('Content-Type', contentType || 'application/octet-stream');
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(finalFilename)}"`);
+        if (response.headers['content-length']) {
+            res.setHeader('Content-Length', response.headers['content-length']);
         }
 
-        // --- Standard Relay (Video) ---
-        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(finalFilename)}"`);
-        if (contentType) res.setHeader('Content-Type', contentType);
-        if (response.headers['content-length']) res.setHeader('Content-Length', response.headers['content-length']);
-        
+        console.log(`[PROXY] Streaming Original: ${finalFilename}`);
         response.data.pipe(res);
 
         response.data.on('error', (err) => {
-            console.error('[STRM-RELAY] Error:', err.message);
-            if (!res.headersSent) res.status(500).send('Relay failure');
+            console.error('[PROXY] Source Error:', err.message);
+            if (!res.headersSent) res.status(500).send('Source relay failed');
         });
+
+        res.on('close', () => {
+            if (response.data && response.data.destroy) response.data.destroy();
+        });
+
+        return;
 
     } catch (error) {
         console.error('[PROXY ERROR]', error.message);
