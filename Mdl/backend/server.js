@@ -254,23 +254,22 @@ app.post('/api/extract', async (req, res) => {
             skipDownload: true,
             quiet: true,
             rmCacheDir: true,
-            // Mimic a real Chrome/Firefox browser — this is crucial for datacenter IPs
-            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            // Mimic a fresh 2024 browser session — crucial for bypassing "Sign in" walls
+            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
             addHeader: [
-                'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
                 'Accept-Language: en-US,en;q=0.9',
-                'Referer: https://www.google.com/',
-                'Sec-Fetch-Mode: navigate',
+                'Sec-Ch-Ua: "Google Chrome";v="123", "Not:A-Brand";v="8", "Chromium";v="123"',
+                'Sec-Ch-Ua-Mobile: ?0',
+                'Sec-Ch-Ua-Platform: "Windows"',
+                'Referer: https://www.youtube.com/',
             ],
-            // Skip DASH manifests which often trigger the bot-wall early
-            youtubeSkipDashManifest: true,
-            youtubeSkipHlsManifest: false
         };
 
         const fs = require('fs');
         const os = require('os');
         
-        // Use cookies if provided, but if not, proceed with hardened extraction
+        // Use cookies if provided via Railway environment or a local file
         if (process.env.YOUTUBE_COOKIES) {
             try {
                 const cookiePath = path.join(os.tmpdir(), 'yt-cookies.txt');
