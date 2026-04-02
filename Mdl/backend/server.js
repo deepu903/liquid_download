@@ -5,7 +5,7 @@ const morgan = require('morgan');
 const ytDlExec = require('youtube-dl-exec');
 let youtubedl = ytDlExec; // Default fallback
 const axios = require('axios');
-const { execSync } = require('child_process');
+const { execSync, spawn } = require('child_process');
 
 const { JSDOM } = require('jsdom');
 
@@ -152,7 +152,6 @@ app.get('/api/download', async (req, res) => {
             res.setHeader('Content-Type', 'audio/mpeg');
             res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(finalFilename)}"`);
             
-            // Spawn FFmpeg with fallback and improved codec compatibility
             const ffmpeg = spawn('ffmpeg', [
                 '-probesize', '32',
                 '-analyzeduration', '0',
@@ -165,7 +164,7 @@ app.get('/api/download', async (req, res) => {
                 '-write_id3v1', '1',
                 '-y',
                 'pipe:1'
-            ], { stdio: ['pipe', 'pipe', 'pipe'] });
+            ], { stdio: ['pipe', 'pipe', 'ignore'] }); 
 
             // Bridge data
             response.data.pipe(ffmpeg.stdin);
