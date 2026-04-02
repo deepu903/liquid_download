@@ -131,7 +131,8 @@ app.get('/api/download', async (req, res) => {
             method: 'get',
             url: url,
             responseType: 'stream',
-            timeout: 60000, 
+            timeout: 120000, 
+            maxContentLength: Infinity,
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                 'Accept': '*/*',
@@ -153,7 +154,8 @@ app.get('/api/download', async (req, res) => {
             res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(finalFilename)}"`);
             
             const ffmpeg = spawn('ffmpeg', [
-                '-probesize', '32',
+                '-fflags', '+genpts', // CRITICAL: Fix timestamps
+                '-probesize', '64k',
                 '-analyzeduration', '0',
                 '-i', 'pipe:0',
                 '-f', 'mp3',
@@ -164,16 +166,13 @@ app.get('/api/download', async (req, res) => {
                 '-write_id3v1', '1',
                 '-y',
                 'pipe:1'
-            ], { stdio: ['pipe', 'pipe', 'ignore'] }); 
+            ], { stdio: ['pipe', 'pipe', 'ignore'] });
 
-            // Bridge data
-            response.data.pipe(ffmpeg.stdin);
+            console.log(`[PROXY] Hardening MP3 Stream: ${finalFilename}`);
+            
+            // Connect streams
+            response.data.pipe(ffmpeg.stdin, { end: true });
             ffmpeg.stdout.pipe(res);
-
-            // CRITICAL: End stdin to finalize headers
-            response.data.on('end', () => {
-                if (ffmpeg.stdin && ffmpeg.stdin.writable) ffmpeg.stdin.end();
-            });
 
             res.on('close', () => {
                 if (!ffmpeg.killed) ffmpeg.kill('SIGKILL');
