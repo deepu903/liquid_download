@@ -171,6 +171,12 @@ app.get('/api/download', async (req, res) => {
             if (response.data && response.data.destroy) response.data.destroy();
         });
 
+        res.on('close', () => {
+            if (response.data && response.data.destroy) response.data.destroy();
+        });
+
+        return;
+
     } catch (error) {
         console.error('[PROXY CRITICAL]', error.message);
         if (!res.headersSent) res.status(500).send('Stream connection failed.');
