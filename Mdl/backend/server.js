@@ -127,20 +127,29 @@ app.get('/api/download', async (req, res) => {
     try {
         console.log(`[PROXY] Starting stream for: ${filename}`);
 
-        const response = await axios({
+        const commonUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+
+        const axiosOpts = {
             method: 'get',
             url: url,
             responseType: 'stream',
-            timeout: 120000, 
+            timeout: 150000, // Slightly longer for stability
             maxContentLength: Infinity,
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'User-Agent': commonUserAgent,
                 'Accept': '*/*',
                 'Referer': 'https://www.google.com/',
-                'Connection': 'keep-alive'
+                'Connection': 'keep-alive',
+                'Range': 'bytes=0-'
             },
             maxRedirects: 10
-        });
+        };
+
+        if (process.env.YOUTUBE_COOKIES) {
+            axiosOpts.headers['Cookie'] = process.env.YOUTUBE_COOKIES;
+        }
+
+        const response = await axios(axiosOpts);
 
         let finalFilename = filename || 'download';
         const contentType = response.headers['content-type'] || '';
@@ -152,15 +161,14 @@ app.get('/api/download', async (req, res) => {
             }
             res.setHeader('Content-Type', 'audio/mpeg');
             res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(finalFilename)}"`);
+            res.flushHeaders(); // CRITICAL: Signal browser to start receiving data
             
             const ffmpeg = spawn('ffmpeg', [
-                '-fflags', '+genpts', // CRITICAL: Fix timestamps
-                '-probesize', '64k',
-                '-analyzeduration', '0',
+                '-fflags', '+genpts+igndts', // Fix broken stream timestamps
                 '-i', 'pipe:0',
                 '-f', 'mp3',
                 '-acodec', 'libmp3lame',
-                '-ab', '192k',
+                '-b:a', '192k', // CBR is much safer for pipelined streams
                 '-ar', '44100',
                 '-id3v2_version', '3',
                 '-write_id3v1', '1',
@@ -168,9 +176,9 @@ app.get('/api/download', async (req, res) => {
                 'pipe:1'
             ], { stdio: ['pipe', 'pipe', 'ignore'] });
 
-            console.log(`[PROXY] Hardening MP3 Stream: ${finalFilename}`);
+            console.log(`[PROXY] Hardened MP3 Pipe: ${finalFilename}`);
             
-            // Connect streams
+            // Bridge streams
             response.data.pipe(ffmpeg.stdin, { end: true });
             ffmpeg.stdout.pipe(res);
 
