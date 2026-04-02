@@ -125,15 +125,14 @@ app.get('/api/download', async (req, res) => {
     if (!url) return res.status(400).send('URL is required');
 
     try {
-        console.log(`[PROXY] Starting stream for: ${filename}`);
+        console.log(`[PROXY] Starting relay for: ${filename}`);
 
-        const commonUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
-
+        const commonUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
         const axiosOpts = {
             method: 'get',
             url: url,
             responseType: 'stream',
-            timeout: 150000, // Slightly longer for stability
+            timeout: 150000,
             maxContentLength: Infinity,
             headers: {
                 'User-Agent': commonUserAgent,
@@ -153,19 +152,23 @@ app.get('/api/download', async (req, res) => {
         const contentType = response.headers['content-type'] || '';
         
         // --- High-Reliability Direct Relay ---
-        // Delivers the original, perfect-quality source stream without conversion
+        // Delivers the original, perfect-quality source file exactly as provided by the platform
         res.setHeader('Content-Type', contentType || 'application/octet-stream');
         res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(finalFilename)}"`);
         if (response.headers['content-length']) {
             res.setHeader('Content-Length', response.headers['content-length']);
         }
 
-        console.log(`[PROXY] Streaming Original: ${finalFilename}`);
+        console.log(`[PROXY] Streaming original stream: ${finalFilename}`);
         response.data.pipe(res);
 
         response.data.on('error', (err) => {
-            console.error('[PROXY] Source Error:', err.message);
-            if (!res.headersSent) res.status(500).send('Source relay failed');
+            console.error('[PROXY] Stream Error:', err.message);
+            if (!res.headersSent) res.status(500).send('Source relay failure');
+        });
+
+        res.on('close', () => {
+            if (response.data && response.data.destroy) response.data.destroy();
         });
 
         res.on('close', () => {
@@ -175,8 +178,8 @@ app.get('/api/download', async (req, res) => {
         return;
 
     } catch (error) {
-        console.error('[PROXY ERROR]', error.message);
-        res.status(500).send('Failed to stream file. This link might be IP-locked or expired.');
+        console.error('[PROXY CRITICAL]', error.message);
+        if (!res.headersSent) res.status(500).send('Stream connection failed.');
     }
 });
 
@@ -342,15 +345,19 @@ app.post('/api/extract', async (req, res) => {
                             duration_string: data.lengthSeconds + 's',
                             webpage_url: `https://youtube.com/watch?v=${videoId}`,
                             uploader: data.author,
-                            formats: allFormats.map(f => ({
+                            formats: allFormats.map(f => {
+                            // Strictly determine if this is an audio-only stream
+                            const isAudioOnly = (f.type?.startsWith('audio/')) || (f.vcodec === 'none');
+                            return {
                                 format_id: f.itag || f.quality,
                                 url: f.url,
                                 ext: f.container || (f.type ? f.type.split('/')[1].split(';')[0] : 'mp4'),
-                                vcodec: f.vcodec || (f.type?.includes('video') ? 'h264' : 'none'),
+                                vcodec: isAudioOnly ? 'none' : (f.vcodec || 'h264'),
                                 acodec: f.acodec || (f.type?.includes('audio') ? 'aac' : 'none'),
-                                resolution: f.qualityLabel || f.quality || 'audio',
+                                resolution: isAudioOnly ? 'audio' : (f.qualityLabel || f.quality || '720p'),
                                 filesize: f.contentLength ? parseInt(f.contentLength) : null
-                            }))
+                            };
+                        })
                         };
                         break; // Stop at first working instance
                     }
