@@ -153,20 +153,28 @@ app.get('/api/download', async (req, res) => {
             res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(finalFilename)}"`);
             
             // Spawn FFmpeg with fallback and improved codec compatibility
-            const { spawn } = require('child_process');
             const ffmpeg = spawn('ffmpeg', [
+                '-probesize', '32',
+                '-analyzeduration', '0',
                 '-i', 'pipe:0',
                 '-f', 'mp3',
                 '-acodec', 'libmp3lame',
                 '-ab', '192k',
                 '-ar', '44100',
+                '-id3v2_version', '3',
+                '-write_id3v1', '1',
                 '-y',
                 'pipe:1'
-            ], { stdio: ['pipe', 'pipe', 'ignore'] }); // Ignore stderr to avoid buffer bloat
+            ], { stdio: ['pipe', 'pipe', 'pipe'] });
 
-            console.log(`[PROXY] Converting to MP3: ${finalFilename}`);
+            // Bridge data
             response.data.pipe(ffmpeg.stdin);
             ffmpeg.stdout.pipe(res);
+
+            // CRITICAL: End stdin to finalize headers
+            response.data.on('end', () => {
+                if (ffmpeg.stdin && ffmpeg.stdin.writable) ffmpeg.stdin.end();
+            });
 
             res.on('close', () => {
                 if (!ffmpeg.killed) ffmpeg.kill('SIGKILL');
