@@ -161,22 +161,18 @@ app.get('/api/download', async (req, res) => {
             }
             res.setHeader('Content-Type', 'audio/mpeg');
             res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(finalFilename)}"`);
-            res.flushHeaders(); // CRITICAL: Signal browser to start receiving data
             
             const ffmpeg = spawn('ffmpeg', [
-                '-fflags', '+genpts+igndts', // Fix broken stream timestamps
                 '-i', 'pipe:0',
                 '-f', 'mp3',
                 '-acodec', 'libmp3lame',
-                '-b:a', '192k', // CBR is much safer for pipelined streams
+                '-b:a', '192k',
                 '-ar', '44100',
-                '-id3v2_version', '3',
-                '-write_id3v1', '1',
                 '-y',
                 'pipe:1'
             ], { stdio: ['pipe', 'pipe', 'ignore'] });
 
-            console.log(`[PROXY] Hardened MP3 Pipe: ${finalFilename}`);
+            console.log(`[PROXY] Converting: ${finalFilename}`);
             
             // Bridge streams
             response.data.pipe(ffmpeg.stdin, { end: true });
