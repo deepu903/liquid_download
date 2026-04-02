@@ -139,10 +139,9 @@ app.get('/api/download', async (req, res) => {
                 'User-Agent': commonUserAgent,
                 'Accept': '*/*',
                 'Referer': 'https://www.google.com/',
-                'Connection': 'keep-alive',
-                'Range': 'bytes=0-'
+                'Connection': 'keep-alive'
             },
-            maxRedirects: 10
+            maxRedirects: 15
         };
 
         if (process.env.YOUTUBE_COOKIES) {
@@ -163,16 +162,19 @@ app.get('/api/download', async (req, res) => {
             res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(finalFilename)}"`);
             
             const ffmpeg = spawn('ffmpeg', [
+                '-fflags', '+genpts', // Fix timestamps so player knows song length
                 '-i', 'pipe:0',
                 '-f', 'mp3',
                 '-acodec', 'libmp3lame',
                 '-b:a', '192k',
                 '-ar', '44100',
+                '-id3v2_version', '3',
+                '-write_id3v1', '1',
                 '-y',
                 'pipe:1'
             ], { stdio: ['pipe', 'pipe', 'ignore'] });
 
-            console.log(`[PROXY] Converting: ${finalFilename}`);
+            console.log(`[PROXY] Re-encoding full stream: ${finalFilename}`);
             
             // Bridge streams
             response.data.pipe(ffmpeg.stdin, { end: true });
