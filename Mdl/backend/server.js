@@ -125,91 +125,55 @@ app.get('/api/download', async (req, res) => {
     if (!url) return res.status(400).send('URL is required');
 
     try {
-        console.log(`[PROXY] Starting stream for: ${filename}`);
+        console.log(`[PROXY] Starting relay for: ${filename}`);
 
-        const response = await axios({
+        const commonUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
+        const axiosOpts = {
             method: 'get',
             url: url,
             responseType: 'stream',
-            timeout: 120000, 
+            timeout: 150000,
             maxContentLength: Infinity,
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'User-Agent': commonUserAgent,
                 'Accept': '*/*',
                 'Referer': 'https://www.google.com/',
                 'Connection': 'keep-alive'
             },
-            maxRedirects: 10
-        });
+            maxRedirects: 15
+        };
 
-        let finalFilename = filename || 'download';
-        const contentType = response.headers['content-type'] || '';
-        const isAudioDownload = contentType.includes('audio') || finalFilename.toLowerCase().endsWith('.mp3');
-
-        if (isAudioDownload) {
-            if (!finalFilename.toLowerCase().endsWith('.mp3')) {
-                finalFilename = finalFilename.replace(/\.(mp4|webm|m4a)$/i, '') + '.mp3';
-            }
-            res.setHeader('Content-Type', 'audio/mpeg');
-            res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(finalFilename)}"`);
-            
-            const ffmpeg = spawn('ffmpeg', [
-                '-fflags', '+genpts', // CRITICAL: Fix timestamps
-                '-probesize', '64k',
-                '-analyzeduration', '0',
-                '-i', 'pipe:0',
-                '-f', 'mp3',
-                '-acodec', 'libmp3lame',
-                '-ab', '192k',
-                '-ar', '44100',
-                '-id3v2_version', '3',
-                '-write_id3v1', '1',
-                '-y',
-                'pipe:1'
-            ], { stdio: ['pipe', 'pipe', 'ignore'] });
-
-            console.log(`[PROXY] Hardening MP3 Stream: ${finalFilename}`);
-            
-            // Connect streams
-            response.data.pipe(ffmpeg.stdin, { end: true });
-            ffmpeg.stdout.pipe(res);
-
-            res.on('close', () => {
-                if (!ffmpeg.killed) ffmpeg.kill('SIGKILL');
-            });
-
-            ffmpeg.on('error', (err) => {
-                console.warn('[FFMPEG WARN] Falling back to direct stream:', err.message);
-                if (!res.headersSent) {
-                    res.setHeader('Content-Type', contentType);
-                    response.data.pipe(res);
-                }
-            });
-
-            response.data.on('error', (err) => {
-                console.error('[STREAM-IN] Error:', err.message);
-                ffmpeg.kill();
-                if (!res.headersSent) res.status(500).send('Source stream error');
-            });
-
-            return;
+        if (process.env.YOUTUBE_COOKIES) {
+            axiosOpts.headers['Cookie'] = process.env.YOUTUBE_COOKIES;
         }
 
-        // --- Standard Relay (Video) ---
-        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(finalFilename)}"`);
-        if (contentType) res.setHeader('Content-Type', contentType);
-        if (response.headers['content-length']) res.setHeader('Content-Length', response.headers['content-length']);
+        const response = await axios(axiosOpts);
+        const finalFilename = filename || 'download';
+        const contentType = response.headers['content-type'] || '';
         
+        // --- High-Reliability Direct Relay ---
+        // Delivers the original, perfect-quality source file exactly as provided by the platform
+        res.setHeader('Content-Type', contentType || 'application/octet-stream');
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(finalFilename)}"`);
+        if (response.headers['content-length']) {
+            res.setHeader('Content-Length', response.headers['content-length']);
+        }
+
+        console.log(`[PROXY] Streaming original stream: ${finalFilename}`);
         response.data.pipe(res);
 
         response.data.on('error', (err) => {
-            console.error('[STRM-RELAY] Error:', err.message);
-            if (!res.headersSent) res.status(500).send('Relay failure');
+            console.error('[PROXY] Stream Error:', err.message);
+            if (!res.headersSent) res.status(500).send('Source relay failure');
+        });
+
+        res.on('close', () => {
+            if (response.data && response.data.destroy) response.data.destroy();
         });
 
     } catch (error) {
-        console.error('[PROXY ERROR]', error.message);
-        res.status(500).send('Failed to stream file. This link might be IP-locked or expired.');
+        console.error('[PROXY CRITICAL]', error.message);
+        if (!res.headersSent) res.status(500).send('Stream connection failed.');
     }
 });
 
@@ -375,15 +339,19 @@ app.post('/api/extract', async (req, res) => {
                             duration_string: data.lengthSeconds + 's',
                             webpage_url: `https://youtube.com/watch?v=${videoId}`,
                             uploader: data.author,
-                            formats: allFormats.map(f => ({
+                            formats: allFormats.map(f => {
+                            // Strictly determine if this is an audio-only stream
+                            const isAudioOnly = (f.type?.startsWith('audio/')) || (f.vcodec === 'none');
+                            return {
                                 format_id: f.itag || f.quality,
                                 url: f.url,
                                 ext: f.container || (f.type ? f.type.split('/')[1].split(';')[0] : 'mp4'),
-                                vcodec: f.vcodec || (f.type?.includes('video') ? 'h264' : 'none'),
+                                vcodec: isAudioOnly ? 'none' : (f.vcodec || 'h264'),
                                 acodec: f.acodec || (f.type?.includes('audio') ? 'aac' : 'none'),
-                                resolution: f.qualityLabel || f.quality || 'audio',
+                                resolution: isAudioOnly ? 'audio' : (f.qualityLabel || f.quality || '720p'),
                                 filesize: f.contentLength ? parseInt(f.contentLength) : null
-                            }))
+                            };
+                        })
                         };
                         break; // Stop at first working instance
                     }
