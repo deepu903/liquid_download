@@ -285,9 +285,39 @@ app.post('/api/extract', async (req, res) => {
             }
         }
 
-        // -- STAGE 2: Generic Scraper Fallback --
-        const hasData = output && (output.formats?.length > 0 || output.entries?.length > 0 || output.url);
+        // -- STAGE 2: Hardened Fallback for YouTube (ytdl-core) --
         const isYouTube = targetUrl.includes('youtube.com') || targetUrl.includes('youtu.be');
+        if (!output && isYouTube) {
+            console.log('[EXTRACT-2] 🛡️ yt-dlp blocked. Trying ytdl-core fallback...');
+            try {
+                const ytdl = require('@distube/ytdl-core');
+                const info = await ytdl.getInfo(targetUrl);
+                if (info && info.formats) {
+                    console.log('[EXTRACT-2] ✅ Success with ytdl-core');
+                    output = {
+                        title: info.videoDetails.title,
+                        thumbnail: info.videoDetails.thumbnails[0]?.url,
+                        duration_string: info.videoDetails.lengthSeconds + 's',
+                        webpage_url: info.videoDetails.video_url,
+                        uploader: info.videoDetails.author.name,
+                        formats: info.formats.map(f => ({
+                            format_id: f.itag,
+                            url: f.url,
+                            ext: f.container || (f.mimeType ? f.mimeType.split('/')[1].split(';')[0] : 'mp4'),
+                            vcodec: f.hasVideo ? 'h264' : 'none',
+                            acodec: f.hasAudio ? 'aac' : 'none',
+                            resolution: f.qualityLabel || 'audio',
+                            filesize: f.contentLength ? parseInt(f.contentLength) : null
+                        }))
+                    };
+                }
+            } catch (ytdlErr) {
+                console.warn('[EXTRACT-2] ytdl-core also failed:', ytdlErr.message);
+            }
+        }
+
+        // -- STAGE 3: Generic Scraper Fallback --
+        const hasData = output && (output.formats?.length > 0 || output.entries?.length > 0 || output.url);
         
         // Skip generic fallback for YouTube as it provides useless open-graph metadata (fake 1 format)
         if (!hasData && !isYouTube) {
