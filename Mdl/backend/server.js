@@ -349,7 +349,51 @@ app.post('/api/extract', async (req, res) => {
             }
         }
 
-        // -- STAGE 3: Generic Scraper Fallback --
+        // -- STAGE 3: Global Hub Fallback (Invidious API) --
+        if (!output && isYouTube) {
+            console.log('[EXTRACT-3] 🌐 Engine 1 & 2 failed. Attempting Global Hub fallback...');
+            const instances = [
+                'invidious.jing.rocks',
+                'iv.melmac.space',
+                'yt.artemislena.eu',
+                'invidious.flokinet.to'
+            ];
+            
+            const videoId = targetUrl.includes('v=') ? targetUrl.split('v=')[1].split('&')[0] : targetUrl.split('/').pop();
+            
+            for (const instance of instances) {
+                try {
+                    console.log(`[EXTRACT-3] Trying Instance: ${instance}`);
+                    const invRes = await axios.get(`https://${instance}/api/v1/videos/${videoId}?fields=title,formatStreams,adaptiveFormats,videoThumbnails,author,lengthSeconds`, { timeout: 4000 });
+                    const data = invRes.data;
+                    if (data && data.title) {
+                        console.log(`[EXTRACT-3] ✅ Success with ${instance}`);
+                        const allFormats = [...(data.formatStreams || []), ...(data.adaptiveFormats || [])];
+                        output = {
+                            title: data.title,
+                            thumbnail: data.videoThumbnails?.find(t => t.quality === 'maxresdefault' || t.quality === 'hqdefault')?.url,
+                            duration_string: data.lengthSeconds + 's',
+                            webpage_url: `https://youtube.com/watch?v=${videoId}`,
+                            uploader: data.author,
+                            formats: allFormats.map(f => ({
+                                format_id: f.itag || f.quality,
+                                url: f.url,
+                                ext: f.container || (f.type ? f.type.split('/')[1].split(';')[0] : 'mp4'),
+                                vcodec: f.vcodec || (f.type?.includes('video') ? 'h264' : 'none'),
+                                acodec: f.acodec || (f.type?.includes('audio') ? 'aac' : 'none'),
+                                resolution: f.qualityLabel || f.quality || 'audio',
+                                filesize: f.contentLength ? parseInt(f.contentLength) : null
+                            }))
+                        };
+                        break; // Stop at first working instance
+                    }
+                } catch (e) {
+                    console.warn(`[EXTRACT-3] ${instance} failed:`, e.message);
+                }
+            }
+        }
+
+        // -- STAGE 4: Generic Scraper Fallback --
         const hasData = output && (output.formats?.length > 0 || output.entries?.length > 0 || output.url);
         
         // Skip generic fallback for YouTube as it provides useless open-graph metadata (fake 1 format)
