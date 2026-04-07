@@ -1,5 +1,5 @@
 {
-  "name": "social-downloader-backend",
-  "main": "src/index.js",  // or your actual entry file
-  "compatibility_date": "2026-04-07"
+    "name": "social-downloader-backend",
+    "main": "server.js",
+    "compatibility_date": "2026-04-07"
 }
