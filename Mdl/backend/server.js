@@ -1,4 +1,6 @@
-const express = require('express');
+export default {
+  async fetch(request, env) {
+    const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
@@ -603,3 +605,6 @@ app.listen(PORT, '0.0.0.0', () => {
 🔧 Status: Healthy
     `);
 });
+    return new Response("Backend is working!");
+  }
+};

@@ -1,5 +1,5 @@
 {
-    "name": "mdl",
+    "name": "backend",
     "main": "server.js",
     "compatibility_date": "2026-04-07",
     "compatibility_flags": [
