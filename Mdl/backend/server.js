@@ -1,5 +1,5 @@
 // ============================================================
-//  Liquid Downloader — Cloudflare Worker
+//  Liquid Downloader — Cloudflare Worker (V9 STEALTH)
 //  POST /api/extract  |  GET /api/download
 // ============================================================
 
@@ -10,14 +10,12 @@ const CORS = {
 };
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
+const STEALTH_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function json(data, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { ...CORS, 'Content-Type': 'application/json' },
-  });
+  return new Response(JSON.stringify(data), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });
 }
 
 function formatBytes(b) {
@@ -37,257 +35,158 @@ function getVideoId(url) {
   try {
     const u = new URL(url);
     if (u.searchParams.get('v')) return u.searchParams.get('v');
-    const m = u.pathname.match(/(?:shorts|embed|v|e)\/([A-Za-z0-9_-]{11})/);
+    const m = u.pathname.match(/(?:shorts|embed|v|e|reels|reel|p|video)\/([A-Za-z0-9_-]{11})/);
     if (m) return m[1];
-    // youtu.be/<id>
     if (u.hostname === 'youtu.be') return u.pathname.slice(1).split('/')[0];
   } catch (_) {}
   return null;
 }
 
-function isYT(url) {
-  return url.includes('youtube.com') || url.includes('youtu.be');
+// ── Extraction Stages ────────────────────────────────────────────────────────
+
+async function extractInstaAjax(url) {
+  try {
+    // This mimics a hidden endpoint used by SaveInsta-like services
+    const r = await fetch(url + '?__a=1&__d=dis', {
+      headers: { 'User-Agent': STEALTH_UA, 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      signal: AbortSignal.timeout(8000)
+    });
+    if (r.ok) {
+      const d = await r.json();
+      const media = d.graphql?.shortcode_media || d.items?.[0];
+      if (media) {
+        return {
+          title: media.title || media.caption?.text || 'Instagram Reel',
+          thumbnail: media.display_url || media.thumbnail_src,
+          formats: [{ url: media.video_url, ext: 'mp4', resolution: 'Original' }]
+        };
+      }
+    }
+  } catch (_) {}
+  return null;
 }
 
-// ── YouTube via Invidious ────────────────────────────────────────────────────
-
-const INVIDIOUS = [
-  'inv.tux.digital',
-  'invidious.private.coffee',
-  'invidious.jing.rocks',
-  'iv.melmac.space',
-  'yt.artemislena.eu',
-  'invidious.flokinet.to',
-  'invidious.privacydev.net',
-];
-
-async function extractYouTube(url) {
-  const videoId = getVideoId(url);
-  if (!videoId) return null;
-
-  for (const host of INVIDIOUS) {
+async function extractByCobalt(url) {
+  const apis = ['https://cobalt.mnotf.dev/api/json', 'https://cobalt.q-f-l.xyz/api/json', 'https://api.cobalt.tools/api/json'];
+  for (const api of apis) {
     try {
-      const apiUrl = `https://${host}/api/v1/videos/${videoId}?fields=title,formatStreams,adaptiveFormats,videoThumbnails,author,lengthSeconds`;
-      const r = await fetch(apiUrl, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(6000) });
+      const r = await fetch(api, {
+        method: 'POST',
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json', 'User-Agent': STEALTH_UA },
+        body: JSON.stringify({ url, videoQuality: '1080' }),
+        signal: AbortSignal.timeout(9000),
+      });
       if (!r.ok) continue;
       const d = await r.json();
-      if (!d?.title) continue;
-
-      const all = [...(d.formatStreams || []), ...(d.adaptiveFormats || [])];
-      return {
-        title: d.title,
-        thumbnail: d.videoThumbnails?.find(t => t.quality === 'maxresdefault' || t.quality === 'hqdefault')?.url || d.videoThumbnails?.[0]?.url,
-        duration: d.lengthSeconds,
-        uploader: d.author,
-        formats: all.map(f => {
-          const audio = f.vcodec === 'none' || !f.vcodec || f.type?.startsWith('audio/');
-          return {
-            url: f.url,
-            ext: audio ? 'm4a' : 'mp4',
-            vcodec: audio ? 'none' : (f.vcodec || 'h264'),
-            acodec: f.acodec || 'aac',
-            height: parseInt(f.resolution) || 0,
-            resolution: audio ? 'audio' : (f.qualityLabel || f.quality || '720p'),
-            filesize: f.contentLength ? parseInt(f.contentLength) : null,
-          };
-        }),
-      };
+      if (d.status === 'stream' || d.status === 'redirect') {
+        return { title: d.filename || 'Media', formats: [{ url: d.url, ext: 'mp4', resolution: 'HD' }] };
+      }
     } catch (_) {}
   }
   return null;
 }
 
-// ── Enhanced Generic Scraper (Social Media Ready) ────────────────────────────
-
-async function extractGeneric(url) {
-  try {
-    const r = await fetch(url, {
-      headers: { 'User-Agent': UA, 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
-      redirect: 'follow',
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!r.ok) return null;
-    const html = await r.text();
-
-    const getMeta = (prop) => {
-      const match = html.match(new RegExp(`<meta[^>]+(?:property|name)=["']${prop}["'][^>]+content=["']([^"']+)["']`, 'i')) ||
-                   html.match(new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${prop}["']`, 'i'));
-      return match ? match[1] : null;
-    };
-
-    const title = getMeta('og:title') || getMeta('twitter:title') || html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1] || 'Media';
-    const thumbnail = getMeta('og:image') || getMeta('twitter:image');
-    
-    // Look for high-priority video URLs
-    const videoUrl = getMeta('og:video:url') || getMeta('og:video:secure_url') || getMeta('og:video') || getMeta('twitter:player:stream');
-
-    const formats = [];
-    if (videoUrl) {
-      formats.push({ format_id: 'og-video', url: videoUrl, ext: 'mp4', vcodec: 'h264', acodec: 'aac', resolution: 'Original' });
-    }
-
-    // JSON-LD or platform data search
-    const jsonLd = html.match(/<script type=["']application\/ld\+json["']>([^<]+)<\/script>/i);
-    if (jsonLd) {
-      try {
-        const data = JSON.parse(jsonLd[1]);
-        const contentUrl = data.contentUrl || data.video?.contentUrl || data.thumbnailUrl;
-        if (contentUrl && !formats.find(f => f.url === contentUrl)) {
-          formats.push({ format_id: 'ld-json', url: contentUrl, ext: data.video ? 'mp4' : 'jpg', vcodec: data.video ? 'h264' : 'none', acodec: 'aac', resolution: 'Original' });
-        }
-      } catch (_) {}
-    }
-
-    // Pure Regex fallbacks for direct stream links
-    if (formats.length === 0) {
-      const streamMatch = html.match(/https?:\/\/[^"']+\.(?:mp4|m4a|m3u8|webm)(?:\?[^"']*)?/gi);
-      if (streamMatch) {
-        streamMatch.slice(0, 5).forEach((u, i) => {
-          if (!formats.find(f => f.url === u)) {
-            formats.push({ format_id: `regex-${i}`, url: u, ext: u.includes('m4a') ? 'm4a' : 'mp4', vcodec: u.includes('m4a') ? 'none' : 'h264', acodec: 'aac', resolution: 'Raw Stream' });
-          }
-        });
+async function extractPiped(videoId) {
+  const nodes = ['pipedapi.kavin.rocks', 'pipedapi.adminforge.de', 'pipedapi.lunar.icu'];
+  for (const node of nodes) {
+    try {
+      const r = await fetch(`https://${node}/streams/${videoId}`, { signal: AbortSignal.timeout(7000) });
+      if (!r.ok) continue;
+      const d = await r.json();
+      if (d.title) {
+        const streams = (d.videoStreams || []).filter(s => s.videoOnly === false);
+        return { title: d.title, thumbnail: d.thumbnailUrl, duration: d.duration, formats: streams.map(s => ({ url: s.url, ext: s.extension || 'mp4', resolution: s.quality || 'HD' })) };
       }
-    }
-
-    return formats.length ? { title, thumbnail, duration: null, formats } : null;
-  } catch (_) { return null; }
+    } catch (_) {}
+  }
+  return null;
 }
 
-// ── Build download format list ───────────────────────────────────────────────
-
-function buildFormats(output) {
-  const seen = new Set();
-  const result = [];
-
-  // Gallery / multi-entry
-  if (output.entries) {
-    output.entries.forEach((e, i) => {
-      const u = e.url || e.thumbnail;
-      if (u && !seen.has(u)) {
-        seen.add(u);
-        const isVid = e.vcodec !== 'none';
-        result.push({ quality: isVid ? `Part ${i + 1}` : `Photo ${i + 1}`, type: isVid ? 'MP4' : 'Image', url: u, size: formatBytes(e.filesize), icon: isVid ? 'fa-film' : 'fa-image', badge: isVid ? 'HQ' : 'Photo' });
-      }
-    });
-  }
-
-  if (output.formats?.length) {
-    const videos = output.formats.filter(f => f.vcodec !== 'none').sort((a, b) => (b.height || 0) - (a.height || 0));
-    const audios = output.formats.filter(f => f.vcodec === 'none' && f.acodec !== 'none');
-
-    for (const f of videos) {
-      if (seen.has(f.url) || result.length >= 12) continue;
-      const h = f.height || 0;
-      const ql = h >= 2160 ? '4K' : h >= 1440 ? '1440p' : h >= 1080 ? '1080p' : h >= 720 ? '720p' : h >= 480 ? '480p' : h >= 360 ? '360p' : (f.resolution || 'Video');
-      seen.add(f.url);
-      result.push({ quality: ql, type: (f.ext || 'mp4').toUpperCase(), url: f.url, size: formatBytes(f.filesize), icon: 'fa-film', badge: h >= 720 ? 'HQ' : '' });
+async function extractTikTok(url) {
+  try {
+    const r = await fetch(`https://www.tikwm.com/api/?url=${encodeURIComponent(url)}`, { signal: AbortSignal.timeout(8000) });
+    const d = await r.json();
+    if (d.code === 0 && d.data) {
+      return { title: d.data.title, thumbnail: d.data.cover, duration: d.data.duration, formats: [{ url: `https://www.tikwm.com${d.data.hdplay}`, ext: 'mp4', resolution: 'HD (No Watermark)' }] };
     }
-
-    if (audios.length) {
-      const best = audios.find(f => f.ext === 'm4a') || audios[0];
-      if (!seen.has(best.url)) {
-        seen.add(best.url);
-        result.push({ quality: 'Audio Only', type: 'M4A', url: best.url, size: formatBytes(best.filesize), icon: 'fa-music', badge: 'Audio' });
-      }
-    }
-  }
-
-  // Fallback single URL
-  if (!result.length && output.url) {
-    result.push({ quality: 'Original', type: (output.ext || 'Media').toUpperCase(), url: output.url, size: 'Direct', icon: 'fa-download', badge: 'Direct' });
-  }
-
-  return result;
+  } catch (_) {}
+  return null;
 }
 
 // ── Route: POST /api/extract ─────────────────────────────────────────────────
 
 async function handleExtract(request) {
   let body;
-  try { body = await request.json(); } catch (_) {
-    return json({ status: 'error', message: 'Invalid JSON body.' }, 400);
-  }
-
+  try { body = await request.json(); } catch (_) { return json({ status: 'error', message: 'Invalid JSON' }, 400); }
   const rawUrl = (body.url || '').trim();
-  if (!rawUrl) return json({ status: 'error', message: 'Please provide a valid URL.' }, 400);
+  if (!rawUrl) return json({ status: 'error', message: 'Empty URL' }, 400);
 
-  // Resolve redirect (for short links)
   let targetUrl = rawUrl;
   try {
-    const r = await fetch(rawUrl, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(5000) });
+    const r = await fetch(rawUrl, { method: 'HEAD', headers: { 'User-Agent': STEALTH_UA }, redirect: 'follow', signal: AbortSignal.timeout(5000) });
     targetUrl = r.url || rawUrl;
   } catch (_) {}
 
-  let output = isYT(targetUrl) ? await extractYouTube(targetUrl) : null;
-  if (!output) output = await extractGeneric(targetUrl);
+  const videoId = getVideoId(targetUrl);
+  let output = null;
 
-  if (!output || (!output.formats?.length && !output.entries?.length && !output.url)) {
-    return json({ status: 'error', message: 'No media found or extraction failed. The link might be private or protected.' });
+  // 1. Instagram Specialized Ajax
+  if (targetUrl.includes('instagram.com')) {
+    output = await extractInstaAjax(targetUrl);
+  }
+
+  // 2. Platform specialized
+  if (!output && isYT(targetUrl)) output = await extractPiped(videoId);
+  if (!output && targetUrl.includes('tiktok.com')) output = await extractTikTok(targetUrl);
+
+  // 3. Global cluster
+  if (!output) output = await extractByCobalt(targetUrl);
+
+  // 4. Mirror search fallback (YouTube)
+  if (!output && videoId && videoId.length === 11) output = await extractPiped(videoId);
+
+  if (!output || !output.formats?.length) {
+    return json({ 
+      status: 'error', 
+      message: 'Extraction failed.', 
+      debug: { targetUrl, scraper: 'v9_stealth' } 
+    });
   }
 
   const { host, protocol } = new URL(request.url);
   const base = `${protocol}//${host}`;
   const sanitizedTitle = (output.title || 'media').slice(0, 50).replace(/[^a-z0-9]/gi, '_');
 
-  const formats = buildFormats(output).map(f => {
-    let ext = (f.type || 'media').toLowerCase();
-    if (ext === 'image') { const m = f.url.match(/\.(jpg|jpeg|png|webp|gif)/i); ext = m?.[1] || 'jpg'; }
-    return {
-      ...f,
-      url: `${base}/api/download?url=${encodeURIComponent(f.url)}&filename=${encodeURIComponent(sanitizedTitle + '.' + ext)}`,
-    };
-  });
+  const formats = output.formats.map((f, i) => ({
+    quality: f.resolution,
+    type: f.ext.toUpperCase(),
+    url: `${base}/api/download?url=${encodeURIComponent(f.url)}&filename=${encodeURIComponent(sanitizedTitle + '.' + f.ext)}`,
+    icon: 'fa-download', badge: 'HD'
+  }));
 
-  return json({ status: 'success', title: output.title || 'Liquid Download', thumbnail: output.thumbnail || null, duration: formatDuration(output.duration), formats });
+  return json({ status: 'success', title: output.title, thumbnail: output.thumbnail, duration: formatDuration(output.duration), formats });
 }
-
-// ── Route: GET /api/download ─────────────────────────────────────────────────
 
 async function handleDownload(request) {
   const { searchParams } = new URL(request.url);
   const url = searchParams.get('url');
-  const filename = searchParams.get('filename') || 'download';
-
-  if (!url) return new Response('URL parameter required', { status: 400, headers: CORS });
-
+  if (!url) return new Response('Missing URL', { status: 400, headers: CORS });
   try {
-    const upstream = await fetch(url, {
-      headers: { 'User-Agent': UA, 'Accept': '*/*', 'Referer': 'https://www.google.com/' },
-      redirect: 'follow',
-      signal: AbortSignal.timeout(120000),
-    });
-
-    if (!upstream.ok && upstream.status !== 206) {
-      return new Response(`Source returned ${upstream.status}`, { status: 502, headers: CORS });
-    }
-
-    const headers = {
-      ...CORS,
-      'Content-Type': upstream.headers.get('content-type') || 'application/octet-stream',
-      'Content-Disposition': `attachment; filename="${encodeURIComponent(filename)}"`,
-    };
+    const upstream = await fetch(url, { headers: { 'User-Agent': UA, 'Accept': '*/*', 'Referer': 'https://www.google.com/' }, redirect: 'follow', signal: AbortSignal.timeout(120000) });
+    const headers = { ...CORS, 'Content-Type': upstream.headers.get('content-type') || 'application/octet-stream', 'Content-Disposition': `attachment; filename="${encodeURIComponent(searchParams.get('filename') || 'download')}"` };
     const cl = upstream.headers.get('content-length');
     if (cl) headers['Content-Length'] = cl;
-
     return new Response(upstream.body, { status: 200, headers });
-  } catch (err) {
-    return new Response('Relay failed: ' + err.message, { status: 500, headers: CORS });
-  }
+  } catch (err) { return new Response('Relay failed', { status: 500, headers: CORS }); }
 }
-
-// ── Worker Entry ─────────────────────────────────────────────────────────────
 
 export default {
   async fetch(request) {
     const { pathname } = new URL(request.url);
     const method = request.method.toUpperCase();
-
     if (method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
-    if (pathname === '/' || pathname === '/health') return json({ status: 'ok', message: '🚀 Liquid Downloader Worker is live!' });
     if (pathname === '/api/extract' && method === 'POST') return handleExtract(request);
     if (pathname === '/api/download' && method === 'GET') return handleDownload(request);
-
-    return json({ status: 'error', message: 'Not found.' }, 404);
+    return json({ status: 'ok', msg: 'Liquid V9' });
   },
 };
