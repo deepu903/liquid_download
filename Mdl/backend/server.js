@@ -52,6 +52,8 @@ function isYT(url) {
 // ── YouTube via Invidious ────────────────────────────────────────────────────
 
 const INVIDIOUS = [
+  'inv.tux.digital',
+  'invidious.private.coffee',
   'invidious.jing.rocks',
   'iv.melmac.space',
   'yt.artemislena.eu',
@@ -65,10 +67,8 @@ async function extractYouTube(url) {
 
   for (const host of INVIDIOUS) {
     try {
-      const r = await fetch(
-        `https://${host}/api/v1/videos/${videoId}?fields=title,formatStreams,adaptiveFormats,videoThumbnails,author,lengthSeconds`,
-        { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(7000) }
-      );
+      const apiUrl = `https://${host}/api/v1/videos/${videoId}?fields=title,formatStreams,adaptiveFormats,videoThumbnails,author,lengthSeconds`;
+      const r = await fetch(apiUrl, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(6000) });
       if (!r.ok) continue;
       const d = await r.json();
       if (!d?.title) continue;
@@ -76,9 +76,7 @@ async function extractYouTube(url) {
       const all = [...(d.formatStreams || []), ...(d.adaptiveFormats || [])];
       return {
         title: d.title,
-        thumbnail:
-          d.videoThumbnails?.find(t => t.quality === 'maxresdefault' || t.quality === 'hqdefault')?.url ||
-          d.videoThumbnails?.[0]?.url,
+        thumbnail: d.videoThumbnails?.find(t => t.quality === 'maxresdefault' || t.quality === 'hqdefault')?.url || d.videoThumbnails?.[0]?.url,
         duration: d.lengthSeconds,
         uploader: d.author,
         formats: all.map(f => {
@@ -94,17 +92,17 @@ async function extractYouTube(url) {
           };
         }),
       };
-    } catch (_) { /* try next */ }
+    } catch (_) {}
   }
   return null;
 }
 
-// ── Generic OG / HTML scraper ────────────────────────────────────────────────
+// ── Enhanced Generic Scraper (Social Media Ready) ────────────────────────────
 
 async function extractGeneric(url) {
   try {
     const r = await fetch(url, {
-      headers: { 'User-Agent': UA, 'Accept': 'text/html,application/xhtml+xml,*/*;q=0.9' },
+      headers: { 'User-Agent': UA, 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
       redirect: 'follow',
       signal: AbortSignal.timeout(10000),
     });
@@ -112,23 +110,44 @@ async function extractGeneric(url) {
     const html = await r.text();
 
     const getMeta = (prop) => {
-      const m =
-        html.match(new RegExp(`<meta[^>]+(?:property|name)=["']${prop}["'][^>]+content=["']([^"']+)["']`, 'i')) ||
-        html.match(new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${prop}["']`, 'i'));
-      return m?.[1] || null;
+      const match = html.match(new RegExp(`<meta[^>]+(?:property|name)=["']${prop}["'][^>]+content=["']([^"']+)["']`, 'i')) ||
+                   html.match(new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${prop}["']`, 'i'));
+      return match ? match[1] : null;
     };
 
-    const title = getMeta('og:title') || html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1] || 'Media';
-    const thumbnail = getMeta('og:image');
-    const videoUrl = getMeta('og:video:secure_url') || getMeta('og:video');
+    const title = getMeta('og:title') || getMeta('twitter:title') || html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1] || 'Media';
+    const thumbnail = getMeta('og:image') || getMeta('twitter:image');
+    
+    // Look for high-priority video URLs
+    const videoUrl = getMeta('og:video:url') || getMeta('og:video:secure_url') || getMeta('og:video') || getMeta('twitter:player:stream');
 
     const formats = [];
-    if (videoUrl) formats.push({ url: videoUrl, ext: 'mp4', vcodec: 'h264', acodec: 'aac', height: 0, resolution: 'Original', filesize: null });
+    if (videoUrl) {
+      formats.push({ format_id: 'og-video', url: videoUrl, ext: 'mp4', vcodec: 'h264', acodec: 'aac', resolution: 'Original' });
+    }
 
-    for (const m of html.matchAll(/<(?:video|source)[^>]+src=["']([^"']+)["']/gi)) {
-      const src = m[1].startsWith('//') ? 'https:' + m[1] : m[1].startsWith('/') ? new URL(m[1], url).href : m[1];
-      if (!formats.find(f => f.url === src))
-        formats.push({ url: src, ext: 'mp4', vcodec: 'h264', acodec: 'aac', height: 0, resolution: 'Original', filesize: null });
+    // JSON-LD or platform data search
+    const jsonLd = html.match(/<script type=["']application\/ld\+json["']>([^<]+)<\/script>/i);
+    if (jsonLd) {
+      try {
+        const data = JSON.parse(jsonLd[1]);
+        const contentUrl = data.contentUrl || data.video?.contentUrl || data.thumbnailUrl;
+        if (contentUrl && !formats.find(f => f.url === contentUrl)) {
+          formats.push({ format_id: 'ld-json', url: contentUrl, ext: data.video ? 'mp4' : 'jpg', vcodec: data.video ? 'h264' : 'none', acodec: 'aac', resolution: 'Original' });
+        }
+      } catch (_) {}
+    }
+
+    // Pure Regex fallbacks for direct stream links
+    if (formats.length === 0) {
+      const streamMatch = html.match(/https?:\/\/[^"']+\.(?:mp4|m4a|m3u8|webm)(?:\?[^"']*)?/gi);
+      if (streamMatch) {
+        streamMatch.slice(0, 5).forEach((u, i) => {
+          if (!formats.find(f => f.url === u)) {
+            formats.push({ format_id: `regex-${i}`, url: u, ext: u.includes('m4a') ? 'm4a' : 'mp4', vcodec: u.includes('m4a') ? 'none' : 'h264', acodec: 'aac', resolution: 'Raw Stream' });
+          }
+        });
+      }
     }
 
     return formats.length ? { title, thumbnail, duration: null, formats } : null;
