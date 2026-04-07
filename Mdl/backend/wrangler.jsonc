@@ -1,6 +1,6 @@
 {
     "name": "liquid-downloader",
-    "main": "server.js",
+    "main": "worker.js",
     "compatibility_date": "2026-04-07",
     "compatibility_flags": ["nodejs_compat"]
 }
