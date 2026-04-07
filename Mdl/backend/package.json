@@ -1,21 +1,14 @@
 {
-  "name": "social-downloader-backend",
+  "name": "liquid-downloader-worker",
   "version": "1.0.0",
-  "description": "Backend for Liquid Social Downloader",
-  "main": "server.js",
+  "description": "Cloudflare Worker backend for Liquid Downloader",
+  "private": true,
   "scripts": {
-    "start": "node server.js",
-    "postinstall": "curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux -o ytdlp-bin && chmod a+rx ytdlp-bin"
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "start": "wrangler dev"
   },
-  "dependencies": {
-    "@distube/ytdl-core": "^4.16.12",
-    "axios": "^1.6.2",
-    "cors": "^2.8.5",
-    "express": "^4.18.2",
-    "helmet": "^7.1.0",
-    "jsdom": "^29.0.1",
-    "morgan": "^1.10.0",
-    "youtube-dl-exec": "^2.4.9"
-  },
-  "private": true
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
 }
